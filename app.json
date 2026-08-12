@@ -3,6 +3,7 @@
     "name": "POS",
     "slug": "POS",
     "version": "1.0.0",
+    "scheme": "pos",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -21,6 +22,9 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": ["expo-sqlite", "expo-router", "expo-status-bar"]
+    "plugins": ["expo-sqlite", "expo-router", "expo-status-bar"],
+    "extra": {
+      "ocrEndpointUrl": null
+    }
   }
 }

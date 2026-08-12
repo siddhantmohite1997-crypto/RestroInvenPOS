@@ -12,9 +12,9 @@ export default function AppLayout() {
     <Tabs screenOptions={{ headerShown: true }}>
       <Tabs.Screen name="orders/index" options={{ title: 'Billing' }} />
       <Tabs.Screen name="tables/index" options={{ title: 'Tables' }} />
-      <Tabs.Screen name="menu/index" options={{ title: 'Menu' }} />
+      <Tabs.Screen name="menu" options={{ title: 'Menu', headerShown: false }} />
       <Tabs.Screen name="reports/index" options={{ title: 'Reports' }} />
-      <Tabs.Screen name="settings/index" options={{ title: 'Settings' }} />
+      <Tabs.Screen name="settings" options={{ title: 'Settings', headerShown: false }} />
     </Tabs>
   );
 }

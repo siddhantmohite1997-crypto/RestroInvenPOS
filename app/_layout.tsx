@@ -3,10 +3,13 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { useMigrations } from 'drizzle-orm/expo-sqlite/migrator';
 import { StatusBar } from 'expo-status-bar';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { db } from '@/db/client';
 import migrations from '@/db/migrations/migrations';
 import { ensureBootstrapped } from '@/db/seed';
 import { useAuthStore } from '@/store/authStore';
+
+const queryClient = new QueryClient();
 
 export default function RootLayout() {
   const { success: migrationsReady, error: migrationError } = useMigrations(db, migrations);
@@ -37,10 +40,10 @@ export default function RootLayout() {
   }
 
   return (
-    <>
+    <QueryClientProvider client={queryClient}>
       <StatusBar style="auto" />
       <Stack screenOptions={{ headerShown: false }} />
-    </>
+    </QueryClientProvider>
   );
 }
 
