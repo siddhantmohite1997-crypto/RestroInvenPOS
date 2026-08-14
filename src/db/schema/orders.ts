@@ -74,6 +74,8 @@ export const orderItems = sqliteTable('order_items', {
   unitPriceSnapshot: real('unit_price_snapshot').notNull(),
   /** Tax rate and service-charge-exemption at add-time, so a later menu edit can't rewrite past bills. */
   taxRatePercentSnapshot: real('tax_rate_percent_snapshot').notNull().default(0),
+  /** JSON array of { label, ratePercent }, e.g. CGST/SGST — lets receipts print a compliant per-slab breakdown. */
+  taxComponentsSnapshot: text('tax_components_snapshot'),
   isServiceChargeExemptSnapshot: integer('is_service_charge_exempt_snapshot', { mode: 'boolean' })
     .notNull()
     .default(false),

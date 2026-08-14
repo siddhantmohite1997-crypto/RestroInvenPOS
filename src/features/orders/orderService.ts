@@ -5,6 +5,7 @@ import { generateId } from '@/lib/id';
 import { calculateOrderTotals, round2 } from '@/features/tax/taxEngine';
 import { apportionDiscount, type DiscountInput } from '@/features/discounts/discountEngine';
 import { setTableStatus } from '@/features/tables/tableService';
+import { nextInvoiceNumber } from '@/features/restaurant/restaurantService';
 
 export type Order = typeof orders.$inferSelect;
 export type OrderItem = typeof orderItems.$inferSelect;
@@ -99,9 +100,19 @@ export async function addItemToOrder(orderId: string, input: AddItemInput): Prom
   if (!menuItem) throw new Error('Menu item not found');
 
   let taxRatePercent = 0;
+  let taxComponentsSnapshot: string | null = null;
   if (menuItem.taxRuleId) {
     const rule = await db.query.taxRules.findFirst({ where: eq(taxRules.id, menuItem.taxRuleId) });
     taxRatePercent = rule?.totalRatePercent ?? 0;
+    const components = await db.query.taxComponents.findMany({
+      where: (c, { eq: eqOp }) => eqOp(c.taxRuleId, menuItem.taxRuleId!),
+      orderBy: (c, { asc }) => asc(c.sortOrder),
+    });
+    if (components.length > 0) {
+      taxComponentsSnapshot = JSON.stringify(
+        components.map((c) => ({ label: c.label, ratePercent: c.ratePercent })),
+      );
+    }
   }
 
   const modifiersSum = (input.modifiers ?? []).reduce((sum, m) => sum + m.priceDelta, 0);
@@ -116,6 +127,7 @@ export async function addItemToOrder(orderId: string, input: AddItemInput): Prom
     nameSnapshot: menuItem.name,
     unitPriceSnapshot: unitPrice,
     taxRatePercentSnapshot: taxRatePercent,
+    taxComponentsSnapshot,
     isServiceChargeExemptSnapshot: menuItem.isServiceChargeExempt,
     quantity: input.quantity,
     lineSubtotal,
@@ -280,10 +292,13 @@ export async function recordPayment(orderId: string, input: RecordPaymentInput):
     receivedByStaffId: input.staffId,
   });
 
+  const invoiceNumber = order.invoiceNumber ?? (await nextInvoiceNumber(order.restaurantId));
+
   await db
     .update(orders)
     .set({
       status: 'paid',
+      invoiceNumber,
       amountPaid: order.grandTotal,
       billedAt: order.billedAt ?? new Date(),
       paidAt: new Date(),

@@ -31,11 +31,14 @@ export default function SettingsScreen() {
         />
       </View>
 
+      <Pressable style={styles.linkRow} onPress={() => router.push('/settings/business-details')}>
+        <Text style={styles.linkText}>Business Details</Text>
+      </Pressable>
       <Pressable style={styles.linkRow} onPress={() => router.push('/settings/tax-rules')}>
         <Text style={styles.linkText}>Tax Rules</Text>
       </Pressable>
 
-      <Text style={styles.subtitle}>Business details & staff management — coming in Phase 6.</Text>
+      <Text style={styles.subtitle}>Staff management — coming in Phase 6.</Text>
       <Pressable style={styles.logoutButton} onPress={logout}>
         <Text style={styles.logoutText}>Log out</Text>
       </Pressable>

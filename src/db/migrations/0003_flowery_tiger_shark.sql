@@ -1,0 +1,1 @@
+ALTER TABLE `order_items` ADD `tax_components_snapshot` text;

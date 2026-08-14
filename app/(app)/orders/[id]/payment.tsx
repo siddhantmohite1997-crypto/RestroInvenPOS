@@ -29,7 +29,7 @@ export default function PaymentScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['openOrders'] });
       queryClient.invalidateQueries({ queryKey: ['order', id] });
-      router.dismissTo('/orders');
+      router.replace(`/orders/${id}/receipt`);
     },
   });
 

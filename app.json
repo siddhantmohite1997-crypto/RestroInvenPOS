@@ -22,7 +22,13 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": ["expo-sqlite", "expo-router", "expo-status-bar"],
+    "plugins": [
+      "expo-sqlite",
+      "expo-router",
+      "expo-status-bar",
+      "expo-sharing",
+      "expo-mail-composer"
+    ],
     "extra": {
       "ocrEndpointUrl": null
     }
