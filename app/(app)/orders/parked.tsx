@@ -1,9 +1,8 @@
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
-import { listOpenOrders, listParkedOrders } from '@/features/orders/orderService';
-import { Button } from '@/components/Button';
+import { listParkedOrders, resumeOrder } from '@/features/orders/orderService';
 
 const ORDER_TYPE_LABEL: Record<string, string> = {
   dine_in: 'Dine-in',
@@ -11,42 +10,34 @@ const ORDER_TYPE_LABEL: Record<string, string> = {
   delivery: 'Delivery',
 };
 
-export default function OrdersScreen() {
+export default function ParkedOrdersScreen() {
   const router = useRouter();
   const restaurantId = useRestaurantId();
+  const queryClient = useQueryClient();
 
-  const openOrdersQuery = useQuery({
-    queryKey: ['openOrders', restaurantId],
-    queryFn: () => listOpenOrders(restaurantId),
-    refetchInterval: 3000,
-  });
   const parkedOrdersQuery = useQuery({
     queryKey: ['parkedOrders', restaurantId],
     queryFn: () => listParkedOrders(restaurantId),
-    refetchInterval: 3000,
   });
 
-  const parkedCount = parkedOrdersQuery.data?.length ?? 0;
+  const resumeMutation = useMutation({
+    mutationFn: (orderId: string) => resumeOrder(orderId),
+    onSuccess: (_data, orderId) => {
+      queryClient.invalidateQueries({ queryKey: ['parkedOrders', restaurantId] });
+      queryClient.invalidateQueries({ queryKey: ['openOrders', restaurantId] });
+      router.replace(`/orders/${orderId}`);
+    },
+  });
 
   return (
     <View style={styles.container}>
-      <View style={styles.topActions}>
-        <Button label="+ New Order" onPress={() => router.push('/orders/new')} style={{ flex: 1 }} />
-        <Button
-          label={`Parked (${parkedCount})`}
-          variant="secondary"
-          onPress={() => router.push('/orders/parked')}
-          style={{ flex: 1 }}
-        />
-      </View>
-
       <FlatList
-        data={openOrdersQuery.data ?? []}
+        data={parkedOrdersQuery.data ?? []}
         keyExtractor={(o) => o.id}
         contentContainerStyle={styles.list}
-        ListEmptyComponent={<Text style={styles.empty}>No open orders. Start a new one above.</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>No parked bills.</Text>}
         renderItem={({ item }) => (
-          <Pressable style={styles.row} onPress={() => router.push(`/orders/${item.id}`)}>
+          <Pressable style={styles.row} onPress={() => resumeMutation.mutate(item.id)}>
             <Text style={styles.orderType}>{ORDER_TYPE_LABEL[item.orderType]}</Text>
             <Text style={styles.orderMeta}>
               {item.customerName ? `${item.customerName} · ` : ''}₹{item.grandTotal.toFixed(2)}
@@ -60,7 +51,6 @@ export default function OrdersScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  topActions: { flexDirection: 'row', gap: 8, padding: 12 },
   list: { padding: 12, gap: 8 },
   row: { padding: 14, borderRadius: 10, backgroundColor: '#f5f5f5' },
   orderType: { fontSize: 16, fontWeight: '600' },

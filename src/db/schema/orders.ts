@@ -72,6 +72,11 @@ export const orderItems = sqliteTable('order_items', {
   comboDealId: text('combo_deal_id').references(() => comboDeals.id),
   nameSnapshot: text('name_snapshot').notNull(),
   unitPriceSnapshot: real('unit_price_snapshot').notNull(),
+  /** Tax rate and service-charge-exemption at add-time, so a later menu edit can't rewrite past bills. */
+  taxRatePercentSnapshot: real('tax_rate_percent_snapshot').notNull().default(0),
+  isServiceChargeExemptSnapshot: integer('is_service_charge_exempt_snapshot', { mode: 'boolean' })
+    .notNull()
+    .default(false),
   quantity: integer('quantity').notNull().default(1),
   lineSubtotal: real('line_subtotal').notNull(),
   lineDiscountTotal: real('line_discount_total').notNull().default(0),

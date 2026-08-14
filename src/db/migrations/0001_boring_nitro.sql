@@ -1,0 +1,1 @@
+ALTER TABLE `restaurants` ADD `tables_enabled` integer DEFAULT true NOT NULL;

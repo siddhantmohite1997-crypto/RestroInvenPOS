@@ -29,6 +29,8 @@ export const restaurants = sqliteTable('restaurants', {
     .notNull()
     .default(false),
   serviceChargePercent: real('service_charge_percent').notNull().default(0),
+  /** Lets counter-service/QSR restaurants turn off table tracking entirely; toggle in Settings. */
+  tablesEnabled: integer('tables_enabled', { mode: 'boolean' }).notNull().default(true),
   roundingRule: text('rounding_rule')
     .$type<'none' | 'nearest_1' | 'nearest_0_5' | 'nearest_5'>()
     .notNull()

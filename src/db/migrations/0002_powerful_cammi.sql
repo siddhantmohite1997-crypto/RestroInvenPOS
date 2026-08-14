@@ -1,0 +1,2 @@
+ALTER TABLE `order_items` ADD `tax_rate_percent_snapshot` real DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE `order_items` ADD `is_service_charge_exempt_snapshot` integer DEFAULT false NOT NULL;
