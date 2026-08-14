@@ -17,7 +17,7 @@ export default function AppLayout() {
         options={{ title: 'Tables', headerShown: false, href: tablesEnabled ? undefined : null }}
       />
       <Tabs.Screen name="menu" options={{ title: 'Menu', headerShown: false }} />
-      <Tabs.Screen name="reports/index" options={{ title: 'Reports' }} />
+      <Tabs.Screen name="reports" options={{ title: 'Reports', headerShown: false }} />
       <Tabs.Screen name="settings" options={{ title: 'Settings', headerShown: false }} />
     </Tabs>
   );
