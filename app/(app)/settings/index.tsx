@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { useMutation } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { setTablesEnabled } from '@/features/restaurant/restaurantService';
+import { canManageStaff, canViewAuditLog } from '@/features/auth/permissions';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -15,6 +16,9 @@ export default function SettingsScreen() {
     mutationFn: (enabled: boolean) => setTablesEnabled(restaurant!.id, enabled),
     onSuccess: hydrate,
   });
+
+  const isManager = currentUser ? canManageStaff(currentUser.role) : false;
+  const canSeeAudit = currentUser ? canViewAuditLog(currentUser.role) : false;
 
   return (
     <View style={styles.container}>
@@ -31,14 +35,24 @@ export default function SettingsScreen() {
         />
       </View>
 
-      <Pressable style={styles.linkRow} onPress={() => router.push('/settings/business-details')}>
-        <Text style={styles.linkText}>Business Details</Text>
-      </Pressable>
-      <Pressable style={styles.linkRow} onPress={() => router.push('/settings/tax-rules')}>
-        <Text style={styles.linkText}>Tax Rules</Text>
-      </Pressable>
-
-      <Text style={styles.subtitle}>Staff management — coming in Phase 6.</Text>
+      {isManager && (
+        <>
+          <Pressable style={styles.linkRow} onPress={() => router.push('/settings/business-details')}>
+            <Text style={styles.linkText}>Business Details</Text>
+          </Pressable>
+          <Pressable style={styles.linkRow} onPress={() => router.push('/settings/tax-rules')}>
+            <Text style={styles.linkText}>Tax Rules</Text>
+          </Pressable>
+          <Pressable style={styles.linkRow} onPress={() => router.push('/settings/staff')}>
+            <Text style={styles.linkText}>Staff</Text>
+          </Pressable>
+        </>
+      )}
+      {canSeeAudit && (
+        <Pressable style={styles.linkRow} onPress={() => router.push('/settings/audit-log')}>
+          <Text style={styles.linkText}>Audit Log</Text>
+        </Pressable>
+      )}
       <Pressable style={styles.logoutButton} onPress={logout}>
         <Text style={styles.logoutText}>Log out</Text>
       </Pressable>
@@ -66,8 +80,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#eee',
   },
   linkText: { fontSize: 15, fontWeight: '600', color: '#2563eb' },
-  subtitle: { color: '#666', textAlign: 'center', marginTop: 12, marginBottom: 12 },
   logoutButton: {
+    marginTop: 20,
     backgroundColor: '#c0392b',
     paddingHorizontal: 24,
     paddingVertical: 12,

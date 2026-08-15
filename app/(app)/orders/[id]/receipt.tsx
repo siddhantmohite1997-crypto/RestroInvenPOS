@@ -3,13 +3,15 @@ import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
-import { getOrder } from '@/features/orders/orderService';
+import { getOrder, voidOrder } from '@/features/orders/orderService';
+import { needsVoidOverride } from '@/features/auth/permissions';
 import { computeTaxComponentBreakdown, toReceiptLineItems } from '@/features/receipts/receiptEngine';
 import { buildReceiptHtml, buildReceiptText, type ReceiptInput } from '@/features/receipts/receiptHtml';
 import { printReceiptHtml, receiptPdfUri } from '@/features/receipts/printerService';
 import { openWhatsAppWithReceipt, sendReceiptEmail, sendReceiptSms, shareReceiptFile } from '@/features/receipts/shareService';
 import { FormField } from '@/components/FormField';
 import { Button } from '@/components/Button';
+import { PinOverrideModal } from '@/components/PinOverrideModal';
 
 const ORDER_TYPE_LABEL: Record<string, string> = { dine_in: 'Dine-in', takeaway: 'Takeaway', delivery: 'Delivery' };
 
@@ -18,11 +20,14 @@ export default function ReceiptScreen() {
   const router = useRouter();
   const restaurant = useAuthStore((s) => s.restaurant)!;
 
+  const currentUser = useAuthStore((s) => s.currentUser)!;
   const orderQuery = useQuery({ queryKey: ['order', id], queryFn: () => getOrder(id) });
   const order = orderQuery.data;
 
   const [phone, setPhone] = useState(order?.customerName ? (order.customerPhone ?? '') : '');
   const [email, setEmail] = useState('');
+  const [voidReason, setVoidReason] = useState('');
+  const [voidOverrideVisible, setVoidOverrideVisible] = useState(false);
 
   const receiptInput: ReceiptInput | null = useMemo(() => {
     if (!order) return null;
@@ -93,6 +98,28 @@ export default function ReceiptScreen() {
     onError: (e) => Alert.alert('Email failed', e instanceof Error ? e.message : String(e)),
   });
 
+  const voidMutation = useMutation({
+    mutationFn: (approvedByStaffId?: string) =>
+      voidOrder(id, { staffId: currentUser.id, reason: voidReason, approvedByStaffId }),
+    onSuccess: () => {
+      orderQuery.refetch();
+      router.dismissTo('/orders');
+    },
+    onError: (e) => Alert.alert('Void failed', e instanceof Error ? e.message : String(e)),
+  });
+
+  function onVoidPress() {
+    if (!voidReason.trim()) {
+      Alert.alert('Reason required', 'Enter a reason before voiding this bill.');
+      return;
+    }
+    if (needsVoidOverride(currentUser.role)) {
+      setVoidOverrideVisible(true);
+      return;
+    }
+    voidMutation.mutate(undefined);
+  }
+
   if (!order || !receiptInput) return null;
 
   return (
@@ -146,7 +173,27 @@ export default function ReceiptScreen() {
         <Button label="Email receipt" variant="secondary" onPress={() => emailMutation.mutate()} disabled={!email.trim()} style={styles.button} />
 
         <Button label="Done" onPress={() => router.dismissTo('/orders')} style={styles.doneButton} />
+
+        {order.status === 'paid' && (
+          <>
+            <Text style={styles.sectionLabel}>Void this bill</Text>
+            <FormField label="Reason" value={voidReason} onChangeText={setVoidReason} placeholder="Required to void" />
+            <Button label="Void Order" variant="danger" onPress={onVoidPress} style={styles.button} />
+          </>
+        )}
       </ScrollView>
+
+      <PinOverrideModal
+        visible={voidOverrideVisible}
+        restaurantId={order.restaurantId}
+        title="Manager approval needed"
+        message="Voiding a bill needs an owner/admin PIN to approve."
+        onApprove={(approverId) => {
+          setVoidOverrideVisible(false);
+          voidMutation.mutate(approverId);
+        }}
+        onCancel={() => setVoidOverrideVisible(false)}
+      />
     </View>
   );
 }

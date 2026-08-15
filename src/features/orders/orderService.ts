@@ -6,6 +6,7 @@ import { calculateOrderTotals, round2 } from '@/features/tax/taxEngine';
 import { apportionDiscount, type DiscountInput } from '@/features/discounts/discountEngine';
 import { setTableStatus } from '@/features/tables/tableService';
 import { nextInvoiceNumber } from '@/features/restaurant/restaurantService';
+import { logAudit } from '@/features/audit/auditService';
 
 export type Order = typeof orders.$inferSelect;
 export type OrderItem = typeof orderItems.$inferSelect;
@@ -179,6 +180,8 @@ export interface ApplyDiscountInput extends DiscountInput {
   reason?: string;
   couponCode?: string;
   staffId: string;
+  /** Set when a cashier applied a large discount and an owner/admin approved it via PIN override. */
+  approvedByStaffId?: string;
 }
 
 /** Bill-level discount. Reapplying replaces the previous one rather than stacking. */
@@ -204,6 +207,7 @@ export async function applyBillDiscount(orderId: string, input: ApplyDiscountInp
     reason: input.reason,
     couponCode: input.couponCode,
     appliedByStaffId: input.staffId,
+    approvedByStaffId: input.approvedByStaffId,
   });
 
   for (const item of items) {
@@ -214,6 +218,20 @@ export async function applyBillDiscount(orderId: string, input: ApplyDiscountInp
   }
 
   await recalculateOrderTotals(orderId);
+
+  if (input.approvedByStaffId) {
+    const order = await db.query.orders.findFirst({ where: eq(orders.id, orderId) });
+    if (order) {
+      await logAudit({
+        restaurantId: order.restaurantId,
+        staffId: input.approvedByStaffId,
+        action: 'discount_override',
+        entityType: 'order',
+        entityId: orderId,
+        reason: `${input.reason ?? 'Large discount'} (requested by cashier, ${total.toFixed(2)} applied)`,
+      });
+    }
+  }
 }
 
 export async function clearBillDiscount(orderId: string): Promise<void> {
@@ -309,4 +327,40 @@ export async function recordPayment(orderId: string, input: RecordPaymentInput):
   if (order.tableId) {
     await setTableStatus(order.tableId, 'free', null);
   }
+}
+
+export interface VoidOrderInput {
+  staffId: string;
+  reason: string;
+  /** Set when a cashier voided this and an owner/admin approved it via PIN override. */
+  approvedByStaffId?: string;
+}
+
+/** Voids a paid/billed order. Always writes an audit log entry — this is exactly the kind of
+ * action Phase 6's audit trail exists for. */
+export async function voidOrder(orderId: string, input: VoidOrderInput): Promise<void> {
+  const order = await db.query.orders.findFirst({ where: eq(orders.id, orderId) });
+  if (!order) throw new Error('Order not found');
+
+  await db
+    .update(orders)
+    .set({
+      status: 'void',
+      voidedAt: new Date(),
+      voidReason: input.reason,
+      voidedByStaffId: input.staffId,
+      updatedAt: new Date(),
+    })
+    .where(eq(orders.id, orderId));
+
+  await logAudit({
+    restaurantId: order.restaurantId,
+    staffId: input.approvedByStaffId ?? input.staffId,
+    action: input.approvedByStaffId ? 'void_order_override' : 'void_order',
+    entityType: 'order',
+    entityId: orderId,
+    reason: input.approvedByStaffId ? `${input.reason} (requested by cashier)` : input.reason,
+    before: { status: order.status, grandTotal: order.grandTotal },
+    after: { status: 'void' },
+  });
 }

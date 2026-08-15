@@ -4,28 +4,33 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { applyBillDiscount } from '@/features/orders/orderService';
+import { needsDiscountOverride } from '@/features/auth/permissions';
 import { FormField } from '@/components/FormField';
 import { Button } from '@/components/Button';
+import { PinOverrideModal } from '@/components/PinOverrideModal';
 
 export default function DiscountScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const currentUser = useAuthStore((s) => s.currentUser)!;
+  const restaurantId = useAuthStore((s) => s.restaurant!.id);
   const queryClient = useQueryClient();
 
   const [type, setType] = useState<'flat' | 'percentage'>('percentage');
   const [value, setValue] = useState('');
   const [reason, setReason] = useState('');
   const [couponCode, setCouponCode] = useState('');
+  const [overrideVisible, setOverrideVisible] = useState(false);
 
   const applyMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (approvedByStaffId?: string) =>
       applyBillDiscount(id, {
         type,
         value: parseFloat(value) || 0,
         reason: reason || undefined,
         couponCode: couponCode || undefined,
         staffId: currentUser.id,
+        approvedByStaffId,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['order', id] });
@@ -34,6 +39,15 @@ export default function DiscountScreen() {
   });
 
   const canApply = parseFloat(value) > 0;
+  const discountInput = { type, value: parseFloat(value) || 0 };
+
+  function onApplyPress() {
+    if (needsDiscountOverride(currentUser.role, discountInput)) {
+      setOverrideVisible(true);
+      return;
+    }
+    applyMutation.mutate(undefined);
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -71,7 +85,23 @@ export default function DiscountScreen() {
         autoCapitalize="characters"
       />
 
-      <Button label="Apply discount" onPress={() => applyMutation.mutate()} disabled={!canApply} />
+      {needsDiscountOverride(currentUser.role, discountInput) && (
+        <Text style={styles.overrideHint}>This discount is large enough to need an owner/admin PIN.</Text>
+      )}
+
+      <Button label="Apply discount" onPress={onApplyPress} disabled={!canApply} />
+
+      <PinOverrideModal
+        visible={overrideVisible}
+        restaurantId={restaurantId}
+        title="Manager approval needed"
+        message="This discount is above the usual cashier limit. Enter an owner/admin PIN to approve it."
+        onApprove={(approverId) => {
+          setOverrideVisible(false);
+          applyMutation.mutate(approverId);
+        }}
+        onCancel={() => setOverrideVisible(false)}
+      />
     </ScrollView>
   );
 }
@@ -84,4 +114,5 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: '#2563eb' },
   chipText: { color: '#333', fontWeight: '600' },
   chipTextActive: { color: 'white' },
+  overrideHint: { color: '#c0392b', fontSize: 13, marginBottom: 12 },
 });

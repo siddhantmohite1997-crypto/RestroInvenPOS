@@ -4,6 +4,9 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as ImagePicker from 'expo-image-picker';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
+import { useAuthStore } from '@/store/authStore';
+import { needsPriceEditOverride } from '@/features/auth/permissions';
+import { logAudit } from '@/features/audit/auditService';
 import { listCategories } from '@/features/menu/categoryService';
 import { createItem, deleteItem, getItem, setOutOfStock, updateItem } from '@/features/menu/itemService';
 import {
@@ -15,13 +18,16 @@ import {
 import { listTaxRules } from '@/features/tax/taxService';
 import { FormField } from '@/components/FormField';
 import { Button } from '@/components/Button';
+import { PinOverrideModal } from '@/components/PinOverrideModal';
 
 export default function ItemEditorScreen() {
   const { id, categoryId: categoryIdParam } = useLocalSearchParams<{ id: string; categoryId?: string }>();
   const isNew = id === 'new';
   const router = useRouter();
   const restaurantId = useRestaurantId();
+  const currentUser = useAuthStore((s) => s.currentUser)!;
   const queryClient = useQueryClient();
+  const [priceOverrideVisible, setPriceOverrideVisible] = useState(false);
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -78,7 +84,7 @@ export default function ItemEditorScreen() {
   };
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (approvedByStaffId?: string) => {
       const input = {
         restaurantId,
         categoryId: categoryId!,
@@ -94,12 +100,32 @@ export default function ItemEditorScreen() {
       } else {
         await updateItem(id, input);
       }
+      if (approvedByStaffId) {
+        await logAudit({
+          restaurantId,
+          staffId: approvedByStaffId,
+          action: 'price_edit_override',
+          entityType: 'menu_item',
+          entityId: id,
+          reason: `Price set to ${input.price.toFixed(2)} (requested by cashier)`,
+        });
+      }
     },
     onSuccess: () => {
       invalidate();
       router.back();
     },
   });
+
+  const priceChanged = isNew ? parseFloat(price) > 0 : parseFloat(price) !== itemQuery.data?.price;
+
+  function onSavePress() {
+    if (priceChanged && needsPriceEditOverride(currentUser.role)) {
+      setPriceOverrideVisible(true);
+      return;
+    }
+    saveMutation.mutate(undefined);
+  }
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteItem(id),
@@ -229,15 +255,31 @@ export default function ItemEditorScreen() {
         </>
       )}
 
+      {priceChanged && needsPriceEditOverride(currentUser.role) && (
+        <Text style={styles.overrideHint}>Changing the price needs an owner/admin PIN.</Text>
+      )}
+
       <Button
         label={isNew ? 'Create item' : 'Save changes'}
-        onPress={() => saveMutation.mutate()}
+        onPress={onSavePress}
         disabled={!canSave}
         style={styles.saveButton}
       />
       {!isNew && (
         <Button label="Delete item" variant="danger" onPress={() => deleteMutation.mutate()} style={styles.deleteButton} />
       )}
+
+      <PinOverrideModal
+        visible={priceOverrideVisible}
+        restaurantId={restaurantId}
+        title="Manager approval needed"
+        message="Only an owner or admin can change prices. Enter their PIN to approve this change."
+        onApprove={(approverId) => {
+          setPriceOverrideVisible(false);
+          saveMutation.mutate(approverId);
+        }}
+        onCancel={() => setPriceOverrideVisible(false)}
+      />
     </ScrollView>
   );
 }
@@ -266,4 +308,5 @@ const styles = StyleSheet.create({
   saveButton: { marginTop: 8 },
   deleteButton: { marginTop: 12 },
   empty: { color: '#999' },
+  overrideHint: { color: '#c0392b', fontSize: 13, marginBottom: 12 },
 });

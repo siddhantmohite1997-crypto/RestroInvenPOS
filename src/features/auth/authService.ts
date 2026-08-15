@@ -30,3 +30,21 @@ export async function getUserById(id: string): Promise<AuthenticatedUser | null>
   const row = await db.query.users.findFirst({ where: eq(users.id, id) });
   return row ?? null;
 }
+
+/** Same PIN-scan approach as authenticateByPin, restricted to owner/admin — used for override prompts. */
+export async function authenticateManagerPin(
+  restaurantId: string,
+  pin: string,
+): Promise<AuthenticatedUser | null> {
+  const candidates = await db.query.users.findMany({
+    where: (u, { and, eq: eqOp, inArray }) =>
+      and(eqOp(u.restaurantId, restaurantId), eqOp(u.isActive, true), inArray(u.role, ['owner', 'admin'])),
+  });
+
+  for (const candidate of candidates) {
+    if (await verifyPin(pin, candidate.pinSalt, candidate.pinHash)) {
+      return candidate;
+    }
+  }
+  return null;
+}
