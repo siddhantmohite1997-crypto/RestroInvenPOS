@@ -46,6 +46,9 @@ export default function SettingsScreen() {
           <Pressable style={styles.linkRow} onPress={() => router.push('/settings/staff')}>
             <Text style={styles.linkText}>Staff</Text>
           </Pressable>
+          <Pressable style={styles.linkRow} onPress={() => router.push('/settings/sync')}>
+            <Text style={styles.linkText}>Sync</Text>
+          </Pressable>
         </>
       )}
       {canSeeAudit && (

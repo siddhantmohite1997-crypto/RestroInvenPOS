@@ -9,6 +9,7 @@ export default function SettingsLayout() {
       <Stack.Screen name="staff/index" options={{ title: 'Staff' }} />
       <Stack.Screen name="staff/[id]" options={{ title: 'Staff Member', presentation: 'modal' }} />
       <Stack.Screen name="audit-log" options={{ title: 'Audit Log' }} />
+      <Stack.Screen name="sync" options={{ title: 'Sync' }} />
     </Stack>
   );
 }
