@@ -17,7 +17,8 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "siddhantsm.RestoInvenPOS"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -30,7 +31,11 @@
       "expo-mail-composer"
     ],
     "extra": {
-      "ocrEndpointUrl": null
+      "ocrEndpointUrl": {},
+      "router": {},
+      "eas": {
+        "projectId": "9f232a7b-84a2-454f-8ad4-0eac4c5e30dc"
+      }
     }
   }
 }
