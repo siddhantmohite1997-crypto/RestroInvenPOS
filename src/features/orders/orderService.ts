@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { orders, orderItems, orderItemModifiers, discounts, payments, menuItems, taxRules, restaurants } from '@/db/schema';
 import { generateId } from '@/lib/id';
+
 import { calculateOrderTotals, round2 } from '@/features/tax/taxEngine';
 import { apportionDiscount, type DiscountInput } from '@/features/discounts/discountEngine';
 import { setTableStatus } from '@/features/tables/tableService';
@@ -90,14 +91,15 @@ export async function listParkedOrders(restaurantId: string): Promise<Order[]> {
 }
 
 export interface AddItemInput {
-  menuItemId: string;
+  menuItemId?: string;
+  comboDealId?: string;
   quantity: number;
   modifiers?: { modifierId: string; name: string; priceDelta: number }[];
   notes?: string;
 }
 
 export async function addItemToOrder(orderId: string, input: AddItemInput): Promise<void> {
-  const menuItem = await db.query.menuItems.findFirst({ where: eq(menuItems.id, input.menuItemId) });
+  const menuItem = await db.query.menuItems.findFirst({ where: eq(menuItems.id, input.menuItemId!) });
   if (!menuItem) throw new Error('Menu item not found');
 
   let taxRatePercent = 0;

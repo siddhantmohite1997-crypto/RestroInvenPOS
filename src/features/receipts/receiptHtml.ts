@@ -51,8 +51,8 @@ function escapeHtml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/** Renders a printable/emailable GST-style invoice. Region-agnostic: the tax-id label and which
- * fields appear are driven entirely by restaurant settings, not hardcoded to any one country. */
+/** Thermal-receipt optimized HTML (70–80mm width, ESC/POS compatible).
+ * Region-agnostic: tax-id label and visible fields driven by restaurant settings. */
 export function buildReceiptHtml(input: ReceiptInput): string {
   const { business, order, lineItems, taxComponents } = input;
   const symbol = business.currencySymbol;
@@ -65,13 +65,13 @@ export function buildReceiptHtml(input: ReceiptInput): string {
     .map(
       (item) => `
         <tr>
-          <td>
+          <td class="item-name">
             ${escapeHtml(item.name)}
             ${item.modifierNames.length ? `<div class="modifiers">${item.modifierNames.map(escapeHtml).join(', ')}</div>` : ''}
           </td>
-          <td class="num">${item.quantity}</td>
-          <td class="num">${money(symbol, item.unitPrice)}</td>
-          <td class="num">${money(symbol, item.lineTotal)}</td>
+          <td class="item-qty">${item.quantity}</td>
+          <td class="item-price">${money(symbol, item.unitPrice)}</td>
+          <td class="item-total">${money(symbol, item.lineTotal)}</td>
         </tr>`,
     )
     .join('');
@@ -80,25 +80,185 @@ export function buildReceiptHtml(input: ReceiptInput): string {
     .map((c) => `<tr><td>${escapeHtml(c.label)}</td><td class="num">${money(symbol, c.amount)}</td></tr>`)
     .join('');
 
-  return `
+  return `<!DOCTYPE html>
     <html>
       <head>
         <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Receipt</title>
         <style>
-          body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #111; padding: 24px; }
-          h1 { font-size: 20px; margin: 0 0 4px; }
-          .muted { color: #666; font-size: 13px; }
-          .header { margin-bottom: 16px; }
-          .meta { display: flex; justify-content: space-between; margin: 16px 0; font-size: 13px; }
-          table { width: 100%; border-collapse: collapse; font-size: 13px; }
-          th { text-align: left; border-bottom: 1px solid #ccc; padding: 6px 4px; }
-          td { padding: 6px 4px; border-bottom: 1px solid #eee; }
-          .num { text-align: right; }
-          .modifiers { color: #888; font-size: 11px; }
-          .totals { width: 100%; margin-top: 12px; font-size: 13px; }
-          .totals td { border: none; padding: 3px 4px; }
-          .grand-total td { font-size: 16px; font-weight: 700; border-top: 1px solid #333; }
-          .footer { margin-top: 24px; font-size: 12px; color: #666; text-align: center; }
+          @page {
+            size: 80mm auto;
+            margin: 0;
+            padding: 0;
+          }
+
+          * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+          }
+
+          body {
+            font-family: 'Courier New', Courier, monospace;
+            color: #000;
+            background: #fff;
+            width: 80mm;
+            font-size: 11px;
+            line-height: 1.3;
+            padding: 4mm 2mm;
+          }
+
+          h1 {
+            font-size: 13px;
+            font-weight: 700;
+            margin: 0 0 2mm;
+            text-align: center;
+            word-wrap: break-word;
+            max-width: 76mm;
+          }
+
+          .header {
+            text-align: center;
+            margin-bottom: 3mm;
+            border-bottom: 1px dashed #000;
+            padding-bottom: 2mm;
+          }
+
+          .muted {
+            color: #333;
+            font-size: 10px;
+            margin: 0.5mm 0;
+            word-wrap: break-word;
+          }
+
+          .meta {
+            font-size: 10px;
+            margin: 2mm 0;
+            padding-bottom: 2mm;
+            border-bottom: 1px dashed #000;
+          }
+
+          .meta-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 1mm 0;
+            font-size: 10px;
+          }
+
+          .meta-left {
+            flex: 1;
+            word-wrap: break-word;
+          }
+
+          .meta-right {
+            text-align: right;
+            white-space: nowrap;
+            margin-left: 2mm;
+          }
+
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+            margin: 2mm 0;
+          }
+
+          thead tr {
+            border-bottom: 1px solid #000;
+            font-weight: 700;
+          }
+
+          th {
+            text-align: left;
+            padding: 1mm 0;
+            font-weight: 700;
+            font-size: 10px;
+          }
+
+          td {
+            padding: 0.5mm 1mm;
+            word-wrap: break-word;
+          }
+
+          .item-name {
+            flex: 1;
+            word-wrap: break-word;
+          }
+
+          .item-qty,
+          .item-price,
+          .item-total,
+          .num {
+            text-align: right;
+            white-space: nowrap;
+            padding-right: 1mm;
+          }
+
+          .modifiers {
+            color: #666;
+            font-size: 9px;
+            margin-top: 0.5mm;
+            font-style: italic;
+          }
+
+          .totals {
+            width: 100%;
+            margin: 2mm 0;
+            font-size: 10px;
+            border-top: 1px dashed #000;
+            padding-top: 1mm;
+            border-collapse: collapse;
+          }
+
+          .totals tr {
+            border: none;
+          }
+
+          .totals td {
+            border: none;
+            padding: 0.5mm 0;
+          }
+
+          .totals .label {
+            text-align: left;
+          }
+
+          .totals .amount {
+            text-align: right;
+            white-space: nowrap;
+          }
+
+          .grand-total {
+            font-size: 12px;
+            font-weight: 700;
+            border-top: 1px solid #000;
+            border-bottom: 1px solid #000;
+          }
+
+          .grand-total td {
+            padding: 1mm 0;
+          }
+
+          .footer {
+            margin-top: 2mm;
+            padding-top: 2mm;
+            font-size: 9px;
+            color: #333;
+            text-align: center;
+            border-top: 1px dashed #000;
+            word-wrap: break-word;
+          }
+
+          @media print {
+            body {
+              padding: 0;
+              margin: 0;
+            }
+            @page {
+              margin: 0;
+            }
+          }
         </style>
       </head>
       <body>
@@ -110,35 +270,50 @@ export function buildReceiptHtml(input: ReceiptInput): string {
         </div>
 
         <div class="meta">
-          <div>
-            <div><strong>Invoice:</strong> ${order.invoiceNumber ? escapeHtml(order.invoiceNumber) : '—'}</div>
-            <div>${ORDER_TYPE_LABEL[order.orderType]}${order.tableName ? ` · Table ${escapeHtml(order.tableName)}` : ''}</div>
-            ${order.customerName ? `<div>${escapeHtml(order.customerName)}${order.customerPhone ? ` · ${escapeHtml(order.customerPhone)}` : ''}</div>` : ''}
+          <div class="meta-row">
+            <span class="meta-left"><strong>Inv:</strong> ${order.invoiceNumber ? escapeHtml(order.invoiceNumber) : 'DRAFT'}</span>
           </div>
-          <div class="muted">${order.createdAt.toLocaleString()}</div>
+          <div class="meta-row">
+            <span class="meta-left">${ORDER_TYPE_LABEL[order.orderType]}</span>
+            ${order.tableName ? `<span class="meta-right">Table ${escapeHtml(order.tableName)}</span>` : ''}
+          </div>
+          ${order.customerName ? `<div class="meta-row"><span class="meta-left">${escapeHtml(order.customerName)}${order.customerPhone ? ` (${escapeHtml(order.customerPhone)})` : ''}</span></div>` : ''}
+          <div class="meta-row">
+            <span class="meta-left">${order.createdAt.toLocaleString()}</span>
+          </div>
         </div>
 
         <table>
           <thead>
-            <tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr>
+            <tr>
+              <th class="item-name">Item</th>
+              <th class="item-qty">Qty</th>
+              <th class="item-price">Price</th>
+              <th class="item-total">Amt</th>
+            </tr>
           </thead>
           <tbody>${itemsRows}</tbody>
         </table>
 
         <table class="totals">
-          <tr><td>Subtotal</td><td class="num">${money(symbol, order.subtotal)}</td></tr>
-          ${order.discountTotal > 0 ? `<tr><td>Discount</td><td class="num">-${money(symbol, order.discountTotal)}</td></tr>` : ''}
+          <tr>
+            <td class="label">Subtotal</td>
+            <td class="amount">${money(symbol, order.subtotal)}</td>
+          </tr>
+          ${order.discountTotal > 0 ? `<tr><td class="label">Discount</td><td class="amount">-${money(symbol, order.discountTotal)}</td></tr>` : ''}
           ${taxRows}
-          ${order.serviceChargeTotal > 0 ? `<tr><td>Service charge</td><td class="num">${money(symbol, order.serviceChargeTotal)}</td></tr>` : ''}
-          ${order.roundingAdjustment !== 0 ? `<tr><td>Rounding</td><td class="num">${order.roundingAdjustment > 0 ? '+' : ''}${money(symbol, order.roundingAdjustment)}</td></tr>` : ''}
-          <tr class="grand-total"><td>Total</td><td class="num">${money(symbol, order.grandTotal)}</td></tr>
-          ${order.paymentMode ? `<tr><td>Paid via</td><td class="num">${escapeHtml(order.paymentMode)}</td></tr>` : ''}
+          ${order.serviceChargeTotal > 0 ? `<tr><td class="label">Service Charge</td><td class="amount">${money(symbol, order.serviceChargeTotal)}</td></tr>` : ''}
+          ${order.roundingAdjustment !== 0 ? `<tr><td class="label">Rounding</td><td class="amount">${order.roundingAdjustment > 0 ? '+' : ''}${money(symbol, order.roundingAdjustment)}</td></tr>` : ''}
+          <tr class="grand-total">
+            <td class="label">TOTAL</td>
+            <td class="amount">${money(symbol, order.grandTotal)}</td>
+          </tr>
+          ${order.paymentMode ? `<tr><td class="label">Paid via</td><td class="amount">${escapeHtml(order.paymentMode)}</td></tr>` : ''}
         </table>
 
         ${business.invoiceFooterText ? `<div class="footer">${escapeHtml(business.invoiceFooterText)}</div>` : ''}
       </body>
-    </html>
-  `;
+    </html>`;
 }
 
 /** Plain-text rendering for SMS/thermal-width contexts where HTML isn't usable. */
@@ -148,28 +323,44 @@ export function buildReceiptText(input: ReceiptInput): string {
   const lines: string[] = [];
 
   lines.push(business.name);
-  if (order.invoiceNumber) lines.push(`Invoice: ${order.invoiceNumber}`);
-  lines.push(`${ORDER_TYPE_LABEL[order.orderType]}${order.tableName ? ` - Table ${order.tableName}` : ''}`);
-  lines.push(order.createdAt.toLocaleString());
-  lines.push('-'.repeat(32));
+  lines.push('');
 
-  for (const item of lineItems) {
-    lines.push(`${item.quantity}x ${item.name}  ${money(symbol, item.lineTotal)}`);
-    if (item.modifierNames.length) lines.push(`   ${item.modifierNames.join(', ')}`);
-  }
+  const address = [business.addressLine1, business.addressLine2]
+    .filter((a) => a)
+    .concat(
+      [business.city, business.state, business.postalCode]
+        .filter((a) => a)
+        .join(' '),
+    )
+    .filter((a) => a);
+  address.forEach((line) => lines.push(line as string));
+  if (business.phone) lines.push(`Ph: ${business.phone}`);
 
-  lines.push('-'.repeat(32));
-  lines.push(`Subtotal: ${money(symbol, order.subtotal)}`);
-  if (order.discountTotal > 0) lines.push(`Discount: -${money(symbol, order.discountTotal)}`);
-  for (const c of taxComponents) lines.push(`${c.label}: ${money(symbol, c.amount)}`);
-  if (order.serviceChargeTotal > 0) lines.push(`Service charge: ${money(symbol, order.serviceChargeTotal)}`);
-  if (order.roundingAdjustment !== 0) {
-    lines.push(`Rounding: ${order.roundingAdjustment > 0 ? '+' : ''}${money(symbol, order.roundingAdjustment)}`);
-  }
-  lines.push(`TOTAL: ${money(symbol, order.grandTotal)}`);
-  if (order.paymentMode) lines.push(`Paid via: ${order.paymentMode}`);
+  lines.push('');
+  lines.push(`Invoice: ${order.invoiceNumber ?? 'DRAFT'}`);
+  lines.push(`Date: ${order.createdAt.toLocaleString()}`);
+  lines.push(`Type: ${ORDER_TYPE_LABEL[order.orderType]}`);
+  if (order.tableName) lines.push(`Table: ${order.tableName}`);
+
+  lines.push('');
+  lines.push('========================================');
+  lineItems.forEach((item) => {
+    lines.push(`${item.name.substring(0, 24).padEnd(24)} ${item.quantity.toString().padStart(2)}`);
+    if (item.modifierNames.length) lines.push(`  > ${item.modifierNames.join(', ')}`);
+    lines.push(`  ${money(symbol, item.lineTotal).padStart(10)}`);
+  });
+
+  lines.push('========================================');
+  lines.push(`Subtotal                 ${money(symbol, order.subtotal).padStart(10)}`);
+  if (order.discountTotal > 0) lines.push(`Discount                 -${money(symbol, order.discountTotal).padStart(9)}`);
+  taxComponents.forEach((c) => lines.push(`${c.label.padEnd(24)} ${money(symbol, c.amount).padStart(10)}`));
+  if (order.serviceChargeTotal > 0) lines.push(`Service Charge           ${money(symbol, order.serviceChargeTotal).padStart(10)}`);
+  lines.push('========================================');
+  lines.push(`TOTAL                    ${money(symbol, order.grandTotal).padStart(10)}`);
+  if (order.paymentMode) lines.push(`Paid: ${order.paymentMode}`);
+
   if (business.invoiceFooterText) {
-    lines.push('-'.repeat(32));
+    lines.push('');
     lines.push(business.invoiceFooterText);
   }
 

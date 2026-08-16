@@ -71,8 +71,14 @@ export default function ReceiptScreen() {
   }, [order, restaurant]);
 
   const printMutation = useMutation({
-    mutationFn: async () => printReceiptHtml(buildReceiptHtml(receiptInput!)),
-    onError: (e) => Alert.alert('Print failed', e instanceof Error ? e.message : String(e)),
+    mutationFn: async () => {
+      const result = await printReceiptHtml(buildReceiptHtml(receiptInput!));
+      if (!result.success) {
+        throw new Error(result.message || 'Print failed. Bill saved locally.');
+      }
+      Alert.alert('Success', 'Receipt sent to printer.');
+    },
+    onError: (e) => Alert.alert('Print Error', e instanceof Error ? e.message : String(e)),
   });
 
   const shareMutation = useMutation({

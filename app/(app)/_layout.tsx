@@ -11,14 +11,42 @@ export default function AppLayout() {
 
   return (
     <Tabs screenOptions={{ headerShown: true }}>
-      <Tabs.Screen name="orders" options={{ title: 'Billing', headerShown: false }} />
+      <Tabs.Screen
+        name="orders"
+        options={{
+          title: 'Billing',
+          headerShown: false,
+        }}
+      />
       <Tabs.Screen
         name="tables"
-        options={{ title: 'Tables', headerShown: false, href: tablesEnabled ? undefined : null }}
+        options={{
+          title: 'Tables',
+          headerShown: false,
+          href: tablesEnabled ? undefined : null,
+        }}
       />
-      <Tabs.Screen name="menu" options={{ title: 'Menu', headerShown: false }} />
-      <Tabs.Screen name="reports" options={{ title: 'Reports', headerShown: false }} />
-      <Tabs.Screen name="settings" options={{ title: 'Settings', headerShown: false }} />
+      <Tabs.Screen
+        name="menu"
+        options={{
+          title: 'Menu',
+          headerShown: false,
+        }}
+      />
+      <Tabs.Screen
+        name="reports"
+        options={{
+          title: 'Reports',
+          headerShown: false,
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: 'Settings',
+          headerShown: false,
+        }}
+      />
     </Tabs>
   );
 }
