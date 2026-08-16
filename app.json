@@ -31,6 +31,8 @@
       "expo-mail-composer"
     ],
     "extra": {
+      "syncFunctionUrl": "https://us-central1-YOUR_PROJECT_ID.cloudfunctions.net",
+      "ocrMode": "offline",
       "ocrEndpointUrl": {},
       "router": {},
       "eas": {

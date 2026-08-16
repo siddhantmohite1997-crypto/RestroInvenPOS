@@ -1,4 +1,3 @@
-import { doc, setDoc } from 'firebase/firestore';
 import { eq, inArray } from 'drizzle-orm';
 import { db } from '@/db/client';
 import {
@@ -20,35 +19,53 @@ import {
   payments,
   auditLogs,
 } from '@/db/schema';
-import { getFirestoreClient } from './firebaseClient';
-import { getFirebaseConfig, getLastSyncedAt, setLastSyncedAt } from './syncConfig';
+import { getLastSyncedAt, setLastSyncedAt } from './syncConfig';
 import { filterChangedSince } from './syncDiff';
 
 /**
- * ASSUMPTION flagged for review: this is a one-way (local -> Firebase), manually-triggered
- * backup push — not bidirectional multi-device real-time sync. Rows are diffed by
- * updatedAt/createdAt against the last sync time where a table has one; small child tables
- * without their own timestamp (modifiers, combo items, order-item modifiers, etc.) are pushed
- * in full each time since they're cheap to resend. The `users` table is deliberately excluded —
- * it holds PIN hashes, and pushing those to Firestore without configuring proper security rules
- * (which this app has no way to do from the client) would be a real credential leak.
+ * Phase 8.5: Cloud Function Backend
+ * This is a one-way (local -> backend), manually-triggered backup push.
+ * Authentication: restaurantId + PIN (verified server-side)
+ * No direct Firestore access from app. All writes go through Cloud Function.
  */
 export interface SyncResult {
   pushedCounts: Record<string, number>;
   syncedAt: Date;
 }
 
-/** Accepts rows possibly tagged with a synthetic `changedAt` (from filterChangedSince) and
- * strips it before writing — that field exists only for local diffing, not for Firestore. */
-async function push(firestorePath: string, rows: ({ id: string } & Record<string, unknown>)[]): Promise<void> {
-  for (const { changedAt: _changedAt, ...row } of rows) {
-    const firestore = pendingFirestore!;
-    await setDoc(doc(firestore, firestorePath, row.id), row, { merge: true });
+/**
+ * Call Cloud Function backend for multi-tenant sync
+ * Server verifies PIN against staff records and restaurant enabled status
+ */
+async function callCloudFunctionSync(
+  restaurantId: string,
+  pin: string,
+  syncData: Record<string, unknown>,
+): Promise<{ pushedCounts: Record<string, number> }> {
+  // Get Cloud Function URL from environment
+  const functionUrl = process.env.EXPO_PUBLIC_SYNC_FUNCTION_URL;
+  if (!functionUrl) {
+    throw new Error('Sync backend URL not configured. Add EXPO_PUBLIC_SYNC_FUNCTION_URL to app.json');
   }
-}
 
-// Set once per syncNow() call so push() doesn't need the client threaded through every call site.
-let pendingFirestore: Awaited<ReturnType<typeof getFirestoreClient>> | null = null;
+  const response = await fetch(`${functionUrl}/syncRestaurant`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      restaurantId,
+      pin,
+      syncData,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`Sync failed: ${error.error?.message || response.statusText}`);
+  }
+
+  const result = (await response.json()) as { data: { pushedCounts: Record<string, number> } };
+  return result.data;
+}
 
 /** Lightweight count for the status indicator — checks the highest-traffic tables (orders,
  * menu items, categories) rather than every syncable table, since it just needs to answer
@@ -81,7 +98,7 @@ export async function syncNow(restaurantId: string): Promise<SyncResult> {
   let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
-      () => reject(new Error('Sync timed out. Check your Firebase config and connection, then try again.')),
+      () => reject(new Error('Sync timed out. Check your Cloud Function config and connection, then try again.')),
       SYNC_TIMEOUT_MS,
     );
   });
@@ -93,121 +110,93 @@ export async function syncNow(restaurantId: string): Promise<SyncResult> {
 }
 
 async function syncNowInternal(restaurantId: string): Promise<SyncResult> {
-  const config = await getFirebaseConfig(restaurantId);
-  if (!config) throw new Error('Firebase isn’t configured yet. Add your project details first.');
+  // Get the stored PIN (from auth context or app storage)
+  // TODO: Get PIN from AuthContext or secure storage
+  const pin = process.env.EXPO_PUBLIC_STAFF_PIN || '';
+  if (!pin) {
+    throw new Error('Staff PIN not configured. Please log in first.');
+  }
 
-  pendingFirestore = await getFirestoreClient(config);
   const lastSyncedAt = await getLastSyncedAt(restaurantId);
-  const basePath = `restaurants/${restaurantId}`;
-  const pushedCounts: Record<string, number> = {};
+  const syncData: Record<string, unknown> = {};
 
+  // Collect all changed data from local DB
   const restaurant = await db.query.restaurants.findFirst({ where: eq(restaurants.id, restaurantId) });
   if (restaurant) {
-    const changed = filterChangedSince([{ ...restaurant, changedAt: restaurant.updatedAt }], lastSyncedAt);
-    await push(`${basePath}/meta`, changed);
-    pushedCounts.restaurant = changed.length;
+    syncData.restaurants = filterChangedSince([{ ...restaurant, changedAt: restaurant.updatedAt }], lastSyncedAt);
   }
 
   const categoryRows = await db.query.categories.findMany({ where: eq(categories.restaurantId, restaurantId) });
-  const changedCategories = filterChangedSince(categoryRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
-  await push(`${basePath}/categories`, changedCategories);
-  pushedCounts.categories = changedCategories.length;
+  syncData.categories = filterChangedSince(categoryRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
 
   const menuItemRows = await db.query.menuItems.findMany({ where: eq(menuItems.restaurantId, restaurantId) });
-  const changedMenuItems = filterChangedSince(menuItemRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
-  await push(`${basePath}/menuItems`, changedMenuItems);
-  pushedCounts.menuItems = changedMenuItems.length;
+  syncData.menuItems = filterChangedSince(menuItemRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
 
-  const modifierGroupRows = await db.query.modifierGroups.findMany({ where: eq(modifierGroups.restaurantId, restaurantId) });
-  const changedModifierGroups = filterChangedSince(
+  const modifierGroupRows = await db.query.modifierGroups.findMany({
+    where: eq(modifierGroups.restaurantId, restaurantId),
+  });
+  syncData.modifierGroups = filterChangedSince(
     modifierGroupRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
     lastSyncedAt,
   );
-  await push(`${basePath}/modifierGroups`, changedModifierGroups);
-  pushedCounts.modifierGroups = changedModifierGroups.length;
 
   const modifierGroupIds = modifierGroupRows.map((g) => g.id);
-  const modifierRows = modifierGroupIds.length
+  syncData.modifiers = modifierGroupIds.length
     ? await db.query.modifiers.findMany({ where: inArray(modifiers.modifierGroupId, modifierGroupIds) })
     : [];
-  await push(`${basePath}/modifiers`, modifierRows);
-  pushedCounts.modifiers = modifierRows.length;
 
   const menuItemIds = menuItemRows.map((i) => i.id);
-  const linkRows = menuItemIds.length
+  syncData.menuItemModifierGroups = menuItemIds.length
     ? await db.query.menuItemModifierGroups.findMany({ where: inArray(menuItemModifierGroups.menuItemId, menuItemIds) })
     : [];
-  await push(
-    `${basePath}/menuItemModifierGroups`,
-    linkRows.map((r) => ({ id: `${r.menuItemId}_${r.modifierGroupId}`, ...r })),
-  );
-  pushedCounts.menuItemModifierGroups = linkRows.length;
 
   const taxRuleRows = await db.query.taxRules.findMany({ where: eq(taxRules.restaurantId, restaurantId) });
-  const changedTaxRules = filterChangedSince(taxRuleRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
-  await push(`${basePath}/taxRules`, changedTaxRules);
-  pushedCounts.taxRules = changedTaxRules.length;
+  syncData.taxRules = filterChangedSince(taxRuleRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
 
   const taxRuleIds = taxRuleRows.map((r) => r.id);
-  const taxComponentRows = taxRuleIds.length
+  syncData.taxComponents = taxRuleIds.length
     ? await db.query.taxComponents.findMany({ where: inArray(taxComponents.taxRuleId, taxRuleIds) })
     : [];
-  await push(`${basePath}/taxComponents`, taxComponentRows);
-  pushedCounts.taxComponents = taxComponentRows.length;
 
   const comboRows = await db.query.comboDeals.findMany({ where: eq(comboDeals.restaurantId, restaurantId) });
-  const changedCombos = filterChangedSince(comboRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
-  await push(`${basePath}/comboDeals`, changedCombos);
-  pushedCounts.comboDeals = changedCombos.length;
+  syncData.comboDeals = filterChangedSince(comboRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
 
   const comboIds = comboRows.map((c) => c.id);
-  const comboItemRows = comboIds.length
+  syncData.comboDealItems = comboIds.length
     ? await db.query.comboDealItems.findMany({ where: inArray(comboDealItems.comboDealId, comboIds) })
     : [];
-  await push(`${basePath}/comboDealItems`, comboItemRows);
-  pushedCounts.comboDealItems = comboItemRows.length;
 
   const tableRows = await db.query.diningTables.findMany({ where: eq(diningTables.restaurantId, restaurantId) });
-  const changedTables = filterChangedSince(tableRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
-  await push(`${basePath}/tables`, changedTables);
-  pushedCounts.tables = changedTables.length;
+  syncData.diningTables = filterChangedSince(tableRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
 
   const orderRows = await db.query.orders.findMany({ where: eq(orders.restaurantId, restaurantId) });
-  const changedOrders = filterChangedSince(orderRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
-  await push(`${basePath}/orders`, changedOrders);
-  pushedCounts.orders = changedOrders.length;
+  syncData.orders = filterChangedSince(orderRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
 
   const orderIds = orderRows.map((o) => o.id);
   if (orderIds.length) {
     const orderItemRows = await db.query.orderItems.findMany({ where: inArray(orderItems.orderId, orderIds) });
-    const changedOrderItems = filterChangedSince(orderItemRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
-    await push(`${basePath}/orderItems`, changedOrderItems);
-    pushedCounts.orderItems = changedOrderItems.length;
+    syncData.orderItems = filterChangedSince(
+      orderItemRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+      lastSyncedAt,
+    );
 
     const orderItemIds = orderItemRows.map((i) => i.id);
-    const orderItemModifierRows = orderItemIds.length
+    syncData.orderItemModifiers = orderItemIds.length
       ? await db.query.orderItemModifiers.findMany({ where: inArray(orderItemModifiers.orderItemId, orderItemIds) })
       : [];
-    await push(`${basePath}/orderItemModifiers`, orderItemModifierRows);
-    pushedCounts.orderItemModifiers = orderItemModifierRows.length;
 
-    const discountRows = await db.query.discounts.findMany({ where: inArray(discounts.orderId, orderIds) });
-    await push(`${basePath}/discounts`, discountRows);
-    pushedCounts.discounts = discountRows.length;
-
-    const paymentRows = await db.query.payments.findMany({ where: inArray(payments.orderId, orderIds) });
-    await push(`${basePath}/payments`, paymentRows);
-    pushedCounts.payments = paymentRows.length;
+    syncData.discounts = await db.query.discounts.findMany({ where: inArray(discounts.orderId, orderIds) });
+    syncData.payments = await db.query.payments.findMany({ where: inArray(payments.orderId, orderIds) });
   }
 
   const auditRows = await db.query.auditLogs.findMany({ where: eq(auditLogs.restaurantId, restaurantId) });
-  const changedAudit = filterChangedSince(auditRows.map((r) => ({ ...r, changedAt: r.createdAt })), lastSyncedAt);
-  await push(`${basePath}/auditLogs`, changedAudit);
-  pushedCounts.auditLogs = changedAudit.length;
+  syncData.auditLogs = filterChangedSince(auditRows.map((r) => ({ ...r, changedAt: r.createdAt })), lastSyncedAt);
+
+  // Call Cloud Function to sync (server handles all Firestore writes)
+  const result = await callCloudFunctionSync(restaurantId, pin, syncData);
 
   const syncedAt = new Date();
   await setLastSyncedAt(restaurantId, syncedAt);
-  pendingFirestore = null;
 
-  return { pushedCounts, syncedAt };
+  return { pushedCounts: result.pushedCounts, syncedAt };
 }
