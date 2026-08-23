@@ -23,10 +23,10 @@ import { getLastSyncedAt, setLastSyncedAt } from './syncConfig';
 import { filterChangedSince } from './syncDiff';
 
 /**
- * Phase 8.5: Cloud Function Backend
+ * Phase 8.5: Supabase Backend Edition
  * This is a one-way (local -> backend), manually-triggered backup push.
  * Authentication: restaurantId + PIN (verified server-side)
- * No direct Firestore access from app. All writes go through Cloud Function.
+ * No Firestore access. All data goes to Supabase PostgreSQL via API.
  */
 export interface SyncResult {
   pushedCounts: Record<string, number>;
@@ -34,21 +34,23 @@ export interface SyncResult {
 }
 
 /**
- * Call Cloud Function backend for multi-tenant sync
- * Server verifies PIN against staff records and restaurant enabled status
+ * Call Supabase API backend for multi-tenant sync
+ * Server verifies PIN against Supabase staff table and restaurant enabled status
  */
-async function callCloudFunctionSync(
+async function callSupabaseSync(
   restaurantId: string,
   pin: string,
   syncData: Record<string, unknown>,
 ): Promise<{ pushedCounts: Record<string, number> }> {
-  // Get Cloud Function URL from environment
-  const functionUrl = process.env.EXPO_PUBLIC_SYNC_FUNCTION_URL;
-  if (!functionUrl) {
-    throw new Error('Sync backend URL not configured. Add EXPO_PUBLIC_SYNC_FUNCTION_URL to app.json');
+  // Get Supabase API URL from environment
+  const apiUrl = process.env.EXPO_PUBLIC_SUPABASE_API_URL;
+  if (!apiUrl) {
+    throw new Error(
+      'Supabase API URL not configured. Add EXPO_PUBLIC_SUPABASE_API_URL to app.json or .env',
+    );
   }
 
-  const response = await fetch(`${functionUrl}/syncRestaurant`, {
+  const response = await fetch(`${apiUrl}/sync`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -60,11 +62,11 @@ async function callCloudFunctionSync(
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(`Sync failed: ${error.error?.message || response.statusText}`);
+    throw new Error(`Sync failed: ${error.error || response.statusText}`);
   }
 
-  const result = (await response.json()) as { data: { pushedCounts: Record<string, number> } };
-  return result.data;
+  const result = (await response.json()) as { pushedCounts: Record<string, number> };
+  return result;
 }
 
 /** Lightweight count for the status indicator — checks the highest-traffic tables (orders,
@@ -89,16 +91,15 @@ export async function getPendingChangeCount(restaurantId: string): Promise<numbe
 const SYNC_TIMEOUT_MS = 20000;
 
 /**
- * The Firestore JS SDK doesn't reject promptly on bad credentials/unreachable projects — it
- * retries with backoff internally, which would otherwise leave the UI stuck on "Syncing…"
- * indefinitely. Race the whole operation against a timeout so a bad config always surfaces
- * a clear error instead of hanging forever.
+ * The Supabase API might be slow or unreachable. Race the whole operation
+ * against a timeout so a bad config always surfaces a clear error instead
+ * of hanging forever.
  */
 export async function syncNow(restaurantId: string): Promise<SyncResult> {
   let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
-      () => reject(new Error('Sync timed out. Check your Cloud Function config and connection, then try again.')),
+      () => reject(new Error('Sync timed out. Check your Supabase API URL and connection, then try again.')),
       SYNC_TIMEOUT_MS,
     );
   });
@@ -192,8 +193,8 @@ async function syncNowInternal(restaurantId: string): Promise<SyncResult> {
   const auditRows = await db.query.auditLogs.findMany({ where: eq(auditLogs.restaurantId, restaurantId) });
   syncData.auditLogs = filterChangedSince(auditRows.map((r) => ({ ...r, changedAt: r.createdAt })), lastSyncedAt);
 
-  // Call Cloud Function to sync (server handles all Firestore writes)
-  const result = await callCloudFunctionSync(restaurantId, pin, syncData);
+  // Call Supabase API to sync (server handles all PostgreSQL writes)
+  const result = await callSupabaseSync(restaurantId, pin, syncData);
 
   const syncedAt = new Date();
   await setLastSyncedAt(restaurantId, syncedAt);

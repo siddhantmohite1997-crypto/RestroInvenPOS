@@ -31,7 +31,7 @@
       "expo-mail-composer"
     ],
     "extra": {
-      "syncFunctionUrl": "https://us-central1-YOUR_PROJECT_ID.cloudfunctions.net",
+      "supabaseApiUrl": "http://localhost:3000",
       "ocrMode": "offline",
       "ocrEndpointUrl": {},
       "router": {},

@@ -1,9 +1,13 @@
-import * as functions from 'firebase-functions';
+import { setGlobalOptions } from 'firebase-functions';
+import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { verifyPinAuth, syncRestaurantData, enableRestaurant, disableRestaurant, getRestaurantStatus } from './sync';
 
 // Initialize Firebase Admin SDK
 admin.initializeApp();
+
+// Set global options
+setGlobalOptions({ maxInstances: 10 });
 
 // ============================================================================
 // PUBLIC API: Called by mobile app
@@ -14,22 +18,23 @@ admin.initializeApp();
  * Called by mobile app with restaurantId + PIN for authentication
  * Receives local DB changes, validates auth, writes to multi-tenant Firestore
  */
-export const syncRestaurant = functions.https.onCall(async (data, context) => {
+export const syncRestaurant = onCall(async (request) => {
   try {
-    const { restaurantId, pin, syncData } = data as {
+    const data = request.data as {
       restaurantId: string;
       pin: string;
       syncData: Record<string, unknown>;
     };
+    const { restaurantId, pin, syncData } = data;
 
     if (!restaurantId || !pin) {
-      throw new functions.https.HttpsError('invalid-argument', 'restaurantId and pin required');
+      throw new Error('restaurantId and pin required');
     }
 
     // Verify restaurant is enabled and PIN is correct
     const auth = await verifyPinAuth(restaurantId, pin);
     if (!auth.valid) {
-      throw new functions.https.HttpsError('permission-denied', auth.reason || 'Authentication failed');
+      throw new Error(auth.reason || 'Authentication failed');
     }
 
     // Sync data to multi-tenant Firestore
@@ -42,10 +47,7 @@ export const syncRestaurant = functions.https.onCall(async (data, context) => {
     };
   } catch (err) {
     console.error('Sync error:', err);
-    if (err instanceof functions.https.HttpsError) {
-      throw err;
-    }
-    throw new functions.https.HttpsError('internal', String(err));
+    throw new Error(String(err));
   }
 });
 
@@ -56,15 +58,16 @@ export const syncRestaurant = functions.https.onCall(async (data, context) => {
 /**
  * Enable a restaurant (admin only)
  */
-export const adminEnableRestaurant = functions.https.onCall(async (data, context) => {
+export const adminEnableRestaurant = onCall(async (request) => {
   // Verify caller is authenticated as admin (via Firebase custom claims)
-  if (!context.auth || context.auth.token.admin !== true) {
-    throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+  if (!request.auth || request.auth.token.admin !== true) {
+    throw new Error('Admin access required');
   }
 
-  const { restaurantId } = data as { restaurantId: string };
+  const data = request.data as { restaurantId: string };
+  const { restaurantId } = data;
   if (!restaurantId) {
-    throw new functions.https.HttpsError('invalid-argument', 'restaurantId required');
+    throw new Error('restaurantId required');
   }
 
   await enableRestaurant(restaurantId);
@@ -74,15 +77,16 @@ export const adminEnableRestaurant = functions.https.onCall(async (data, context
 /**
  * Disable a restaurant (admin only)
  */
-export const adminDisableRestaurant = functions.https.onCall(async (data, context) => {
+export const adminDisableRestaurant = onCall(async (request) => {
   // Verify caller is authenticated as admin
-  if (!context.auth || context.auth.token.admin !== true) {
-    throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+  if (!request.auth || request.auth.token.admin !== true) {
+    throw new Error('Admin access required');
   }
 
-  const { restaurantId, reason } = data as { restaurantId: string; reason?: string };
+  const data = request.data as { restaurantId: string; reason?: string };
+  const { restaurantId, reason } = data;
   if (!restaurantId) {
-    throw new functions.https.HttpsError('invalid-argument', 'restaurantId required');
+    throw new Error('restaurantId required');
   }
 
   await disableRestaurant(restaurantId, reason);
@@ -92,15 +96,16 @@ export const adminDisableRestaurant = functions.https.onCall(async (data, contex
 /**
  * Get restaurant status (admin only)
  */
-export const adminGetRestaurantStatus = functions.https.onCall(async (data, context) => {
+export const adminGetRestaurantStatus = onCall(async (request) => {
   // Verify caller is authenticated as admin
-  if (!context.auth || context.auth.token.admin !== true) {
-    throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+  if (!request.auth || request.auth.token.admin !== true) {
+    throw new Error('Admin access required');
   }
 
-  const { restaurantId } = data as { restaurantId: string };
+  const data = request.data as { restaurantId: string };
+  const { restaurantId } = data;
   if (!restaurantId) {
-    throw new functions.https.HttpsError('invalid-argument', 'restaurantId required');
+    throw new Error('restaurantId required');
   }
 
   const status = await getRestaurantStatus(restaurantId);
