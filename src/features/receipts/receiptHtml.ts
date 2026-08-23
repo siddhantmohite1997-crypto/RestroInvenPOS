@@ -37,6 +37,46 @@ export interface ReceiptInput {
   taxComponents: ReceiptTaxComponent[];
 }
 
+/** expo-print's printToFileAsync ignores the @page CSS above and always renders at a fixed
+ * pixel width/height (defaulting to US Letter) unless given explicit dimensions — so we compute
+ * an 80mm-wide, content-estimated-height size here for callers to pass in. */
+const PX_PER_MM = 72 / 25.4;
+export const RECEIPT_PDF_WIDTH_PX = Math.round(80 * PX_PER_MM);
+
+export function estimateReceiptPdfHeightPx(input: ReceiptInput): number {
+  const { business, order, lineItems, taxComponents } = input;
+
+  const addressLineCount = [
+    business.addressLine1,
+    business.addressLine2,
+    business.city || business.state || business.postalCode,
+  ].filter(Boolean).length;
+
+  const headerLineCount = addressLineCount + (business.phone ? 1 : 0) + (business.taxId ? 1 : 0);
+  const itemsHeight = lineItems.reduce((sum, item) => sum + 26 + (item.modifierNames.length ? 12 : 0), 0);
+
+  let totalsRows = 1; // subtotal
+  if (order.discountTotal > 0) totalsRows += 1;
+  totalsRows += taxComponents.length;
+  if (order.serviceChargeTotal > 0) totalsRows += 1;
+  if (order.roundingAdjustment !== 0) totalsRows += 1;
+  if (order.paymentMode) totalsRows += 1;
+
+  const height =
+    90 + // header (business name + border)
+    headerLineCount * 12 +
+    70 + // meta block (invoice/date/type + borders)
+    (order.customerName ? 14 : 0) +
+    22 + // items table header
+    itemsHeight +
+    totalsRows * 16 +
+    24 + // grand total row
+    (business.invoiceFooterText ? 40 : 0) +
+    60; // padding buffer
+
+  return Math.max(300, Math.round(height));
+}
+
 const ORDER_TYPE_LABEL: Record<ReceiptOrderInfo['orderType'], string> = {
   dine_in: 'Dine-in',
   takeaway: 'Takeaway',

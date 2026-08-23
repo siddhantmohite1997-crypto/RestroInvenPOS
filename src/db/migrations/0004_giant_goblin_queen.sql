@@ -1,0 +1,1 @@
+ALTER TABLE `orders` ADD `customer_email` text;

@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
-import { orders, orderItems, orderItemModifiers, discounts, payments, menuItems, taxRules, restaurants } from '@/db/schema';
+import { orders, orderItems, orderItemModifiers, discounts, payments, menuItems, comboDeals, taxRules, restaurants } from '@/db/schema';
 import { generateId } from '@/lib/id';
 
 import { calculateOrderTotals, round2 } from '@/features/tax/taxEngine';
@@ -48,6 +48,18 @@ export async function createOrder(input: CreateOrderInput): Promise<string> {
     await setTableStatus(input.tableId, 'occupied', id);
   }
   return id;
+}
+
+/** Persists a customer's phone/email once they give it (e.g. to send a receipt), so it's
+ * remembered and synced instead of only living in transient screen state. */
+export async function updateOrderContact(
+  orderId: string,
+  input: { customerPhone?: string; customerEmail?: string },
+): Promise<void> {
+  await db
+    .update(orders)
+    .set({ ...input, updatedAt: new Date() })
+    .where(eq(orders.id, orderId));
 }
 
 export async function getOrder(id: string): Promise<OrderWithItems | null> {
@@ -99,16 +111,37 @@ export interface AddItemInput {
 }
 
 export async function addItemToOrder(orderId: string, input: AddItemInput): Promise<void> {
-  const menuItem = await db.query.menuItems.findFirst({ where: eq(menuItems.id, input.menuItemId!) });
-  if (!menuItem) throw new Error('Menu item not found');
+  let name: string;
+  let basePrice: number;
+  let taxRuleId: string | null;
+  let isServiceChargeExempt = false;
+  let menuItemId: string | null = null;
+  let comboDealId: string | null = null;
+
+  if (input.comboDealId) {
+    const combo = await db.query.comboDeals.findFirst({ where: eq(comboDeals.id, input.comboDealId) });
+    if (!combo) throw new Error('Combo not found');
+    comboDealId = combo.id;
+    name = combo.name;
+    basePrice = combo.price;
+    taxRuleId = combo.taxRuleId;
+  } else {
+    const menuItem = await db.query.menuItems.findFirst({ where: eq(menuItems.id, input.menuItemId!) });
+    if (!menuItem) throw new Error('Menu item not found');
+    menuItemId = menuItem.id;
+    name = menuItem.name;
+    basePrice = menuItem.price;
+    taxRuleId = menuItem.taxRuleId;
+    isServiceChargeExempt = menuItem.isServiceChargeExempt;
+  }
 
   let taxRatePercent = 0;
   let taxComponentsSnapshot: string | null = null;
-  if (menuItem.taxRuleId) {
-    const rule = await db.query.taxRules.findFirst({ where: eq(taxRules.id, menuItem.taxRuleId) });
+  if (taxRuleId) {
+    const rule = await db.query.taxRules.findFirst({ where: eq(taxRules.id, taxRuleId) });
     taxRatePercent = rule?.totalRatePercent ?? 0;
     const components = await db.query.taxComponents.findMany({
-      where: (c, { eq: eqOp }) => eqOp(c.taxRuleId, menuItem.taxRuleId!),
+      where: (c, { eq: eqOp }) => eqOp(c.taxRuleId, taxRuleId!),
       orderBy: (c, { asc }) => asc(c.sortOrder),
     });
     if (components.length > 0) {
@@ -119,19 +152,20 @@ export async function addItemToOrder(orderId: string, input: AddItemInput): Prom
   }
 
   const modifiersSum = (input.modifiers ?? []).reduce((sum, m) => sum + m.priceDelta, 0);
-  const unitPrice = round2(menuItem.price + modifiersSum);
+  const unitPrice = round2(basePrice + modifiersSum);
   const lineSubtotal = round2(unitPrice * input.quantity);
 
   const itemId = generateId();
   await db.insert(orderItems).values({
     id: itemId,
     orderId,
-    menuItemId: menuItem.id,
-    nameSnapshot: menuItem.name,
+    menuItemId,
+    comboDealId,
+    nameSnapshot: name,
     unitPriceSnapshot: unitPrice,
     taxRatePercentSnapshot: taxRatePercent,
     taxComponentsSnapshot,
-    isServiceChargeExemptSnapshot: menuItem.isServiceChargeExempt,
+    isServiceChargeExemptSnapshot: isServiceChargeExempt,
     quantity: input.quantity,
     lineSubtotal,
     notes: input.notes,
@@ -354,6 +388,10 @@ export async function voidOrder(orderId: string, input: VoidOrderInput): Promise
       updatedAt: new Date(),
     })
     .where(eq(orders.id, orderId));
+
+  if (order.tableId) {
+    await setTableStatus(order.tableId, 'free', null);
+  }
 
   await logAudit({
     restaurantId: order.restaurantId,

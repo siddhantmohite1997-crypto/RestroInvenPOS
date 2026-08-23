@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Modal, StyleSheet, Text, TextInput, View } from 'react-native';
-import { authenticateManagerPin } from '@/features/auth/authService';
+import { authenticateByPin, authenticateManagerPin } from '@/features/auth/authService';
 import { Button } from './Button';
 
 interface PinOverrideModalProps {
@@ -9,18 +9,22 @@ interface PinOverrideModalProps {
   title: string;
   message: string;
   requireReason?: boolean;
-  onApprove: (approverId: string, reason: string) => void;
+  /** When false, any active staff member's PIN is accepted instead of requiring owner/admin. */
+  managerOnly?: boolean;
+  onApprove: (approverId: string, reason: string, pin: string) => void;
   onCancel: () => void;
 }
 
-/** A blocking PIN prompt for owner/admin sign-off on a cashier action (price edit, large
- * discount, void). Resolves with the approving staff's ID so callers can attribute the action. */
+/** A blocking PIN prompt for sign-off on a sensitive action (price edit, large discount, void,
+ * cloud sync). Resolves with the authenticating staff's ID (and the entered PIN itself, for
+ * callers like cloud sync that need to forward it) so callers can attribute the action. */
 export function PinOverrideModal({
   visible,
   restaurantId,
   title,
   message,
   requireReason,
+  managerOnly = true,
   onApprove,
   onCancel,
 }: PinOverrideModalProps) {
@@ -42,7 +46,9 @@ export function PinOverrideModal({
     }
     setIsChecking(true);
     setError(null);
-    const approver = await authenticateManagerPin(restaurantId, pin);
+    const approver = managerOnly
+      ? await authenticateManagerPin(restaurantId, pin)
+      : await authenticateByPin(restaurantId, pin);
     setIsChecking(false);
     if (!approver) {
       setError('Incorrect PIN.');
@@ -50,8 +56,9 @@ export function PinOverrideModal({
       return;
     }
     const reasonToSend = reason;
+    const pinToSend = pin;
     reset();
-    onApprove(approver.id, reasonToSend);
+    onApprove(approver.id, reasonToSend, pinToSend);
   }
 
   function cancel() {
@@ -78,7 +85,7 @@ export function PinOverrideModal({
 
           <TextInput
             style={styles.pinInput}
-            placeholder="Owner/Admin PIN"
+            placeholder={managerOnly ? 'Owner/Admin PIN' : 'Your PIN'}
             placeholderTextColor="#999"
             value={pin}
             onChangeText={setPin}

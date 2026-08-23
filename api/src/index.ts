@@ -103,57 +103,70 @@ app.post('/sync', async (req: Request, res: Response) => {
     // Sync data
     const pushedCounts: Record<string, number> = {};
 
-    // Tables to sync (in dependency order)
-    const tables = [
-      'restaurants',
-      'categories',
-      'menu_items',
-      'modifier_groups',
-      'modifiers',
-      'menu_item_modifier_groups',
-      'tax_rules',
-      'tax_components',
-      'combo_deals',
-      'combo_deal_items',
-      'dining_tables',
-      'orders',
-      'order_items',
-      'order_item_modifiers',
-      'discounts',
-      'payments',
-      'audit_logs',
-    ];
+    // The client's syncData is keyed by Drizzle's camelCase JS field names (e.g. "menuItems"),
+    // not the underlying snake_case Postgres table names — map each to its real table, and
+    // convert every row's own keys the same way (customerEmail -> customer_email, etc.),
+    // since PostgREST matches JSON keys to column names literally with no case folding.
+    // menuItemModifierGroups has no `id` column locally (composite key on menuItemId+modifierGroupId),
+    // so it needs its own onConflict target instead of the default 'id'.
+    const TABLE_MAP: Record<string, { table: string; conflictTarget: string }> = {
+      restaurants: { table: 'restaurants', conflictTarget: 'id' },
+      categories: { table: 'categories', conflictTarget: 'id' },
+      menuItems: { table: 'menu_items', conflictTarget: 'id' },
+      modifierGroups: { table: 'modifier_groups', conflictTarget: 'id' },
+      modifiers: { table: 'modifiers', conflictTarget: 'id' },
+      menuItemModifierGroups: {
+        table: 'menu_item_modifier_groups',
+        conflictTarget: 'menu_item_id,modifier_group_id',
+      },
+      taxRules: { table: 'tax_rules', conflictTarget: 'id' },
+      taxComponents: { table: 'tax_components', conflictTarget: 'id' },
+      comboDeals: { table: 'combo_deals', conflictTarget: 'id' },
+      comboDealItems: { table: 'combo_deal_items', conflictTarget: 'id' },
+      diningTables: { table: 'dining_tables', conflictTarget: 'id' },
+      orders: { table: 'orders', conflictTarget: 'id' },
+      orderItems: { table: 'order_items', conflictTarget: 'id' },
+      orderItemModifiers: { table: 'order_item_modifiers', conflictTarget: 'id' },
+      discounts: { table: 'discounts', conflictTarget: 'id' },
+      payments: { table: 'payments', conflictTarget: 'id' },
+      auditLogs: { table: 'audit_logs', conflictTarget: 'id' },
+    };
 
-    for (const table of tables) {
-      const rows = (syncData[table] as any[]) || [];
-      pushedCounts[table] = 0;
+    const toSnakeCase = (key: string) => key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+    const rowToSnakeCase = (row: Record<string, unknown>) => {
+      const result: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(row)) {
+        result[toSnakeCase(key)] = value;
+      }
+      return result;
+    };
+
+    for (const [jsKey, { table: pgTable, conflictTarget }] of Object.entries(TABLE_MAP)) {
+      const rows = (syncData[jsKey] as Record<string, unknown>[]) || [];
+      pushedCounts[jsKey] = 0;
 
       for (const row of rows) {
-        // Don't sync staff PINs to this table (already stored separately)
-        if (table === 'staff') {
-          continue;
-        }
-
-        // Remove changedAt (local diffing field)
-        const { changedAt: _changedAt, ...cleanRow } = row as any;
+        // Remove changedAt (local diffing field, not a real column)
+        const { changedAt: _changedAt, ...cleanRow } = row;
+        const snakeRow = rowToSnakeCase(cleanRow);
 
         // Add restaurant_id for filtering
         const rowWithRestaurant = {
-          ...cleanRow,
+          ...snakeRow,
           restaurant_id: restaurantId,
         };
 
         // Upsert (insert or update)
-        const { error } = await supabase.from(table).upsert(rowWithRestaurant, {
-          onConflict: 'id',
+        const { error } = await supabase.from(pgTable).upsert(rowWithRestaurant, {
+          onConflict: conflictTarget,
         });
 
         if (error) {
-          console.error(`Error upserting ${table}:`, error);
+          console.error(`Error upserting ${pgTable}:`, error);
           throw error;
         }
 
-        pushedCounts[table]++;
+        pushedCounts[jsKey]++;
       }
     }
 

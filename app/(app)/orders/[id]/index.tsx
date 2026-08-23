@@ -6,8 +6,11 @@ import { useRestaurantId } from '@/features/auth/useRestaurantId';
 import { listCategories } from '@/features/menu/categoryService';
 import { listItems, type MenuItem } from '@/features/menu/itemService';
 import { getModifierGroupsForItem } from '@/features/menu/modifierService';
+import { listCombos, type ComboDealWithItems } from '@/features/menu/comboService';
 import { addItemToOrder, getOrder, parkOrder } from '@/features/orders/orderService';
 import { Button } from '@/components/Button';
+
+const COMBOS_CATEGORY_ID = '__combos__';
 
 export default function OrderItemPickerScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -23,11 +26,18 @@ export default function OrderItemPickerScreen() {
     queryFn: () => listCategories(restaurantId),
   });
   const activeCategoryId = selectedCategoryId ?? categoriesQuery.data?.[0]?.id ?? null;
+  const showingCombos = activeCategoryId === COMBOS_CATEGORY_ID;
 
   const itemsQuery = useQuery({
     queryKey: ['items', restaurantId, activeCategoryId],
     queryFn: () => listItems(restaurantId, activeCategoryId ?? undefined),
-    enabled: !!activeCategoryId,
+    enabled: !!activeCategoryId && !showingCombos,
+  });
+
+  const combosQuery = useQuery({
+    queryKey: ['combos', restaurantId],
+    queryFn: () => listCombos(restaurantId),
+    enabled: showingCombos,
   });
 
   const orderQuery = useQuery({
@@ -42,6 +52,13 @@ export default function OrderItemPickerScreen() {
     const q = search.trim().toLowerCase();
     return items.filter((i) => i.name.toLowerCase().includes(q));
   }, [itemsQuery.data, search]);
+
+  const visibleCombos = useMemo(() => {
+    const combos = combosQuery.data ?? [];
+    if (!search.trim()) return combos;
+    const q = search.trim().toLowerCase();
+    return combos.filter((c) => c.name.toLowerCase().includes(q));
+  }, [combosQuery.data, search]);
 
   const invalidateOrder = () => queryClient.invalidateQueries({ queryKey: ['order', id] });
 
@@ -69,6 +86,10 @@ export default function OrderItemPickerScreen() {
     }
   }
 
+  function onComboPress(combo: ComboDealWithItems) {
+    router.push(`/orders/${id}/add-combo/${combo.id}`);
+  }
+
   const itemCount = orderQuery.data?.items.reduce((sum, i) => sum + i.quantity, 0) ?? 0;
   const grandTotal = orderQuery.data?.grandTotal ?? 0;
 
@@ -93,6 +114,14 @@ export default function OrderItemPickerScreen() {
         style={styles.categoryList}
         contentContainerStyle={{ gap: 8, paddingHorizontal: 12 }}
         showsHorizontalScrollIndicator={false}
+        ListFooterComponent={
+          <Pressable
+            onPress={() => setSelectedCategoryId(COMBOS_CATEGORY_ID)}
+            style={[styles.categoryChip, showingCombos && styles.categoryChipActive]}
+          >
+            <Text style={[styles.categoryChipText, showingCombos && styles.categoryChipTextActive]}>Combos</Text>
+          </Pressable>
+        }
         renderItem={({ item }) => (
           <Pressable
             onPress={() => setSelectedCategoryId(item.id)}
@@ -105,25 +134,43 @@ export default function OrderItemPickerScreen() {
         )}
       />
 
-      <FlatList
-        data={visibleItems}
-        keyExtractor={(i) => i.id}
-        numColumns={2}
-        contentContainerStyle={styles.itemGrid}
-        columnWrapperStyle={{ gap: 10 }}
-        renderItem={({ item }) => (
-          <Pressable
-            style={[styles.itemCard, item.isOutOfStock && styles.itemCardDisabled]}
-            onPress={() => onItemPress(item)}
-            disabled={item.isOutOfStock}
-          >
-            <Text style={styles.itemName}>{item.name}</Text>
-            <Text style={styles.itemPrice}>
-              {item.isOutOfStock ? 'Out of stock' : `₹${item.price.toFixed(2)}`}
-            </Text>
-          </Pressable>
-        )}
-      />
+      {showingCombos ? (
+        <FlatList
+          data={visibleCombos}
+          keyExtractor={(c) => c.id}
+          numColumns={2}
+          contentContainerStyle={styles.itemGrid}
+          columnWrapperStyle={{ gap: 10 }}
+          ListEmptyComponent={<Text style={styles.emptyText}>No combos available.</Text>}
+          renderItem={({ item }) => (
+            <Pressable style={styles.itemCard} onPress={() => onComboPress(item)}>
+              <Text style={styles.itemName}>{item.name}</Text>
+              <Text style={styles.itemPrice}>₹{item.price.toFixed(2)}</Text>
+              <Text style={styles.comboBadge}>Combo</Text>
+            </Pressable>
+          )}
+        />
+      ) : (
+        <FlatList
+          data={visibleItems}
+          keyExtractor={(i) => i.id}
+          numColumns={2}
+          contentContainerStyle={styles.itemGrid}
+          columnWrapperStyle={{ gap: 10 }}
+          renderItem={({ item }) => (
+            <Pressable
+              style={[styles.itemCard, item.isOutOfStock && styles.itemCardDisabled]}
+              onPress={() => onItemPress(item)}
+              disabled={item.isOutOfStock}
+            >
+              <Text style={styles.itemName}>{item.name}</Text>
+              <Text style={styles.itemPrice}>
+                {item.isOutOfStock ? 'Out of stock' : `₹${item.price.toFixed(2)}`}
+              </Text>
+            </Pressable>
+          )}
+        />
+      )}
 
       <Pressable style={styles.cartBar} onPress={() => router.push(`/orders/${id}/cart`)}>
         <Text style={styles.cartBarText}>
@@ -154,6 +201,8 @@ const styles = StyleSheet.create({
   categoryChipText: { color: '#333', fontWeight: '600' },
   categoryChipTextActive: { color: 'white' },
   itemGrid: { paddingHorizontal: 12, paddingBottom: 80, gap: 10 },
+  emptyText: { textAlign: 'center', color: '#999', marginTop: 20 },
+  comboBadge: { fontSize: 10, color: '#2563eb', fontWeight: '600', marginTop: 4 },
   itemCard: {
     flex: 1,
     padding: 14,

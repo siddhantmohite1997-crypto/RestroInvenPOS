@@ -1,4 +1,5 @@
 import { eq, inArray } from 'drizzle-orm';
+import Constants from 'expo-constants';
 import { db } from '@/db/client';
 import {
   restaurants,
@@ -42,12 +43,11 @@ async function callSupabaseSync(
   pin: string,
   syncData: Record<string, unknown>,
 ): Promise<{ pushedCounts: Record<string, number> }> {
-  // Get Supabase API URL from environment
-  const apiUrl = process.env.EXPO_PUBLIC_SUPABASE_API_URL;
+  // Backend URL is configured once per build in app.json's extra.supabaseApiUrl — not something
+  // an individual restaurant enters, since every restaurant shares the same backend.
+  const apiUrl = Constants.expoConfig?.extra?.supabaseApiUrl as string | undefined;
   if (!apiUrl) {
-    throw new Error(
-      'Supabase API URL not configured. Add EXPO_PUBLIC_SUPABASE_API_URL to app.json or .env',
-    );
+    throw new Error('Cloud sync is not configured for this app build. Contact support.');
   }
 
   const response = await fetch(`${apiUrl}/sync`, {
@@ -95,29 +95,22 @@ const SYNC_TIMEOUT_MS = 20000;
  * against a timeout so a bad config always surfaces a clear error instead
  * of hanging forever.
  */
-export async function syncNow(restaurantId: string): Promise<SyncResult> {
+export async function syncNow(restaurantId: string, pin: string): Promise<SyncResult> {
   let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
-      () => reject(new Error('Sync timed out. Check your Supabase API URL and connection, then try again.')),
+      () => reject(new Error('Sync timed out. Check your connection and try again.')),
       SYNC_TIMEOUT_MS,
     );
   });
   try {
-    return await Promise.race([syncNowInternal(restaurantId), timeout]);
+    return await Promise.race([syncNowInternal(restaurantId, pin), timeout]);
   } finally {
     clearTimeout(timer!);
   }
 }
 
-async function syncNowInternal(restaurantId: string): Promise<SyncResult> {
-  // Get the stored PIN (from auth context or app storage)
-  // TODO: Get PIN from AuthContext or secure storage
-  const pin = process.env.EXPO_PUBLIC_STAFF_PIN || '';
-  if (!pin) {
-    throw new Error('Staff PIN not configured. Please log in first.');
-  }
-
+async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncResult> {
   const lastSyncedAt = await getLastSyncedAt(restaurantId);
   const syncData: Record<string, unknown> = {};
 

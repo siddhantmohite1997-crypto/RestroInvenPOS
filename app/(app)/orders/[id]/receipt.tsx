@@ -3,12 +3,18 @@ import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
-import { getOrder, voidOrder } from '@/features/orders/orderService';
+import { getOrder, updateOrderContact, voidOrder } from '@/features/orders/orderService';
 import { needsVoidOverride } from '@/features/auth/permissions';
 import { computeTaxComponentBreakdown, toReceiptLineItems } from '@/features/receipts/receiptEngine';
-import { buildReceiptHtml, buildReceiptText, type ReceiptInput } from '@/features/receipts/receiptHtml';
+import {
+  buildReceiptHtml,
+  buildReceiptText,
+  estimateReceiptPdfHeightPx,
+  RECEIPT_PDF_WIDTH_PX,
+  type ReceiptInput,
+} from '@/features/receipts/receiptHtml';
 import { printReceiptHtml, receiptPdfUri } from '@/features/receipts/printerService';
-import { openWhatsAppWithReceipt, sendReceiptEmail, sendReceiptSms, shareReceiptFile } from '@/features/receipts/shareService';
+import { sendReceiptEmail, sendReceiptSms, shareReceiptFile, shareReceiptPdfToWhatsApp } from '@/features/receipts/shareService';
 import { FormField } from '@/components/FormField';
 import { Button } from '@/components/Button';
 import { PinOverrideModal } from '@/components/PinOverrideModal';
@@ -25,7 +31,7 @@ export default function ReceiptScreen() {
   const order = orderQuery.data;
 
   const [phone, setPhone] = useState(order?.customerName ? (order.customerPhone ?? '') : '');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(order?.customerEmail ?? '');
   const [voidReason, setVoidReason] = useState('');
   const [voidOverrideVisible, setVoidOverrideVisible] = useState(false);
 
@@ -81,25 +87,39 @@ export default function ReceiptScreen() {
     onError: (e) => Alert.alert('Print Error', e instanceof Error ? e.message : String(e)),
   });
 
+  async function generateReceiptPdf() {
+    const html = buildReceiptHtml(receiptInput!);
+    const heightPx = estimateReceiptPdfHeightPx(receiptInput!);
+    return receiptPdfUri(html, RECEIPT_PDF_WIDTH_PX, heightPx);
+  }
+
   const shareMutation = useMutation({
-    mutationFn: async () => shareReceiptFile(await receiptPdfUri(buildReceiptHtml(receiptInput!))),
+    mutationFn: async () => shareReceiptFile(await generateReceiptPdf()),
     onError: (e) => Alert.alert('Share failed', e instanceof Error ? e.message : String(e)),
   });
 
   const smsMutation = useMutation({
-    mutationFn: async () => sendReceiptSms(phone, buildReceiptText(receiptInput!)),
+    mutationFn: async () => {
+      await sendReceiptSms(phone, buildReceiptText(receiptInput!));
+      await updateOrderContact(id, { customerPhone: phone });
+    },
     onError: (e) => Alert.alert('SMS failed', e instanceof Error ? e.message : String(e)),
   });
 
   const whatsappMutation = useMutation({
-    mutationFn: async () => openWhatsAppWithReceipt(phone, buildReceiptText(receiptInput!)),
+    mutationFn: async () => {
+      await shareReceiptPdfToWhatsApp(await generateReceiptPdf());
+      await updateOrderContact(id, { customerPhone: phone });
+    },
     onError: (e) => Alert.alert('WhatsApp failed', e instanceof Error ? e.message : String(e)),
   });
 
   const emailMutation = useMutation({
     mutationFn: async () => {
-      const pdfUri = await receiptPdfUri(buildReceiptHtml(receiptInput!));
-      await sendReceiptEmail(email, `Receipt ${order?.invoiceNumber ?? ''}`, buildReceiptText(receiptInput!), pdfUri);
+      const pdfUri = await generateReceiptPdf();
+      const body = `Hi,\n\nThank you for dining with us! Please find your receipt attached.\n\n${receiptInput!.business.name}`;
+      await sendReceiptEmail(email, `Receipt ${order?.invoiceNumber ?? ''}`, body, pdfUri);
+      await updateOrderContact(id, { customerEmail: email });
     },
     onError: (e) => Alert.alert('Email failed', e instanceof Error ? e.message : String(e)),
   });

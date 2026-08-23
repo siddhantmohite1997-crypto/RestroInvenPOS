@@ -1,4 +1,5 @@
 import { Redirect, Tabs } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/store/authStore';
 
 export default function AppLayout() {
@@ -16,6 +17,7 @@ export default function AppLayout() {
         options={{
           title: 'Billing',
           headerShown: false,
+          tabBarIcon: ({ color, size }) => <Ionicons name="receipt-outline" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -24,6 +26,7 @@ export default function AppLayout() {
           title: 'Tables',
           headerShown: false,
           href: tablesEnabled ? undefined : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="grid-outline" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -31,6 +34,7 @@ export default function AppLayout() {
         options={{
           title: 'Menu',
           headerShown: false,
+          tabBarIcon: ({ color, size }) => <Ionicons name="restaurant-outline" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -38,6 +42,7 @@ export default function AppLayout() {
         options={{
           title: 'Reports',
           headerShown: false,
+          tabBarIcon: ({ color, size }) => <Ionicons name="bar-chart-outline" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -45,6 +50,7 @@ export default function AppLayout() {
         options={{
           title: 'Settings',
           headerShown: false,
+          tabBarIcon: ({ color, size }) => <Ionicons name="settings-outline" size={size} color={color} />,
         }}
       />
     </Tabs>

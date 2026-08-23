@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react';
-import { ScrollView, Share, StyleSheet, Text, View, Pressable } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, View, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
 import { getSalesSummary } from '@/features/reports/reportService';
 import { today, yesterday, thisWeek, thisMonth } from '@/features/reports/dateRanges';
+import { buildReportHtml } from '@/features/reports/reportHtml';
+import { documentPdfUri } from '@/features/receipts/printerService';
+import { shareReceiptFile } from '@/features/receipts/shareService';
 import { Button } from '@/components/Button';
 
 type PresetKey = 'today' | 'yesterday' | 'week' | 'month';
@@ -44,30 +47,27 @@ export default function ReportsScreen() {
   });
 
   const summary = summaryQuery.data;
+  const restaurantName = useAuthStore((s) => s.restaurant?.name ?? 'Sales Report');
 
   function money(amount: number) {
     return `${currencySymbol}${amount.toFixed(2)}`;
   }
 
-  async function onShare() {
-    if (!summary) return;
-    const label = PRESETS.find((p) => p.key === preset)?.label ?? '';
-    const lines = [
-      `Sales report — ${label}`,
-      `Orders: ${summary.orderCount}  Voids: ${summary.voidCount}`,
-      `Gross sales: ${money(summary.grossSales)}`,
-      `Discounts: -${money(summary.discountsGiven)}`,
-      `Tax collected: ${money(summary.taxCollected)}`,
-      summary.serviceChargeCollected > 0 ? `Service charge: ${money(summary.serviceChargeCollected)}` : null,
-      `Net sales: ${money(summary.netSales)}`,
-      '',
-      'Payment modes:',
-      ...Object.entries(summary.paymentModeBreakdown).map(
-        ([mode, amount]) => `  ${PAYMENT_MODE_LABEL[mode]}: ${money(amount)}`,
-      ),
-    ].filter((l): l is string => l !== null);
-    await Share.share({ message: lines.join('\n') });
-  }
+  const shareReportMutation = useMutation({
+    mutationFn: async () => {
+      const label = PRESETS.find((p) => p.key === preset)?.label ?? '';
+      const html = buildReportHtml({
+        businessName: restaurantName,
+        rangeLabel: label,
+        currencySymbol,
+        summary: summary!,
+        generatedAt: new Date(),
+      });
+      const pdfUri = await documentPdfUri(html);
+      await shareReceiptFile(pdfUri, 'Share sales report');
+    },
+    onError: (e) => Alert.alert('Share failed', e instanceof Error ? e.message : String(e)),
+  });
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -108,7 +108,13 @@ export default function ReportsScreen() {
             ))}
           </View>
 
-          <Button label="Share report" variant="secondary" onPress={onShare} style={styles.button} />
+          <Button
+            label={shareReportMutation.isPending ? 'Preparing…' : 'Share report'}
+            variant="secondary"
+            onPress={() => shareReportMutation.mutate()}
+            disabled={shareReportMutation.isPending}
+            style={styles.button}
+          />
         </>
       )}
 

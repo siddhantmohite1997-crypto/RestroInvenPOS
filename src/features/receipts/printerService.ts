@@ -30,8 +30,22 @@ export async function printReceiptHtml(html: string): Promise<{ success: boolean
 
 /**
  * Generate a receipt as PDF file URI (for email/sharing).
+ * expo-print ignores the receipt HTML's own @page CSS and defaults to US Letter unless given
+ * explicit pixel dimensions, so callers must pass the thermal-width/estimated-height pair from
+ * receiptHtml.ts (RECEIPT_PDF_WIDTH_PX / estimateReceiptPdfHeightPx) to get an 80mm receipt PDF.
  */
-export async function receiptPdfUri(html: string): Promise<string> {
+export async function receiptPdfUri(html: string, widthPx: number, heightPx: number): Promise<string> {
+  try {
+    const { uri } = await Print.printToFileAsync({ html, base64: false, width: widthPx, height: heightPx });
+    return uri;
+  } catch (err) {
+    throw new Error(`Failed to generate PDF: ${String(err)}`);
+  }
+}
+
+/** Generate a standard-page-size (A4/Letter) PDF file URI — for documents meant to be read/filed,
+ * like sales reports, as opposed to receiptPdfUri's fixed-width thermal-receipt output. */
+export async function documentPdfUri(html: string): Promise<string> {
   try {
     const { uri } = await Print.printToFileAsync({ html, base64: false });
     return uri;

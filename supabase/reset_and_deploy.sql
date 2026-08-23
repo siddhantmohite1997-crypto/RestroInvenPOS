@@ -1,3 +1,32 @@
+-- Run this ONCE in the Supabase SQL Editor to replace the old (drifted) schema with the
+-- corrected one in schema.sql. This DROPS all existing tables — including test-restaurant-1
+-- and its staff row — since the column structure changed enough that in-place ALTERs would be
+-- far riskier than a clean rebuild. Recreate your test restaurant(s) after running this.
+
+DROP TABLE IF EXISTS audit_logs CASCADE;
+DROP TABLE IF EXISTS payments CASCADE;
+DROP TABLE IF EXISTS discounts CASCADE;
+DROP TABLE IF EXISTS order_item_modifiers CASCADE;
+DROP TABLE IF EXISTS order_items CASCADE;
+DROP TABLE IF EXISTS orders CASCADE;
+DROP TABLE IF EXISTS dining_tables CASCADE;
+DROP TABLE IF EXISTS combo_deal_items CASCADE;
+DROP TABLE IF EXISTS combo_deals CASCADE;
+DROP TABLE IF EXISTS menu_item_modifier_groups CASCADE;
+DROP TABLE IF EXISTS modifiers CASCADE;
+DROP TABLE IF EXISTS modifier_groups CASCADE;
+DROP TABLE IF EXISTS menu_items CASCADE;
+DROP TABLE IF EXISTS tax_components CASCADE;
+DROP TABLE IF EXISTS tax_rules CASCADE;
+DROP TABLE IF EXISTS categories CASCADE;
+DROP TABLE IF EXISTS staff CASCADE;
+DROP TABLE IF EXISTS restaurants CASCADE;
+
+DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
+
+-- ============================================================================
+-- Below is the full corrected schema (identical to supabase/schema.sql)
+-- ============================================================================
 -- Phase 8.5: Supabase PostgreSQL Schema
 -- Multi-tenant POS system with Row Level Security
 --

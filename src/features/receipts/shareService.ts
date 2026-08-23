@@ -1,13 +1,12 @@
-import { Linking } from 'react-native';
 import * as Sharing from 'expo-sharing';
 import * as SMS from 'expo-sms';
 import * as MailComposer from 'expo-mail-composer';
 
-export async function shareReceiptFile(uri: string): Promise<void> {
+export async function shareReceiptFile(uri: string, dialogTitle = 'Share receipt'): Promise<void> {
   if (!(await Sharing.isAvailableAsync())) {
     throw new Error('Sharing is not available on this device.');
   }
-  await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Share receipt' });
+  await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle });
 }
 
 export async function sendReceiptSms(phone: string, message: string): Promise<void> {
@@ -31,13 +30,12 @@ export async function sendReceiptEmail(email: string, subject: string, body: str
   });
 }
 
-/** Opens a WhatsApp chat with the receipt text pre-filled — no WhatsApp Business API needed. */
-export async function openWhatsAppWithReceipt(phone: string, message: string): Promise<void> {
-  const digitsOnly = phone.replace(/[^\d]/g, '');
-  const url = `whatsapp://send?phone=${digitsOnly}&text=${encodeURIComponent(message)}`;
-  const canOpen = await Linking.canOpenURL(url);
-  if (!canOpen) {
-    throw new Error('WhatsApp is not installed on this device.');
-  }
-  await Linking.openURL(url);
+/**
+ * Shares the receipt PDF through the OS share sheet with WhatsApp as the intended target.
+ * WhatsApp's phone-prefilled deep link (whatsapp://send?phone=...) can only carry plain text,
+ * not a file attachment, so there is no public API to both pre-select a contact by phone number
+ * AND attach a PDF in one step — the user picks WhatsApp (and the contact) from the share sheet.
+ */
+export async function shareReceiptPdfToWhatsApp(pdfUri: string): Promise<void> {
+  await shareReceiptFile(pdfUri, 'Send receipt via WhatsApp');
 }

@@ -37,6 +37,7 @@ export const orders = sqliteTable('orders', {
     .references(() => users.id),
   customerName: text('customer_name'),
   customerPhone: text('customer_phone'),
+  customerEmail: text('customer_email'),
   subtotal: real('subtotal').notNull().default(0),
   discountTotal: real('discount_total').notNull().default(0),
   taxTotal: real('tax_total').notNull().default(0),
