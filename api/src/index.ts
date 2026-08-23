@@ -109,9 +109,17 @@ app.post('/sync', async (req: Request, res: Response) => {
     // since PostgREST matches JSON keys to column names literally with no case folding.
     // menuItemModifierGroups has no `id` column locally (composite key on menuItemId+modifierGroupId),
     // so it needs its own onConflict target instead of the default 'id'.
+    //
+    // Object key order below is also the upsert order, and it matters: each table must come
+    // after every table it has a foreign key into (e.g. menuItems references taxRules, so
+    // taxRules must be upserted first) or the insert fails on a missing FK target. This is NOT
+    // the same order syncService.ts happens to collect the data in on the client — that order
+    // only reflects independent SELECT queries and has no FK constraints to respect.
     const TABLE_MAP: Record<string, { table: string; conflictTarget: string }> = {
       restaurants: { table: 'restaurants', conflictTarget: 'id' },
       categories: { table: 'categories', conflictTarget: 'id' },
+      taxRules: { table: 'tax_rules', conflictTarget: 'id' },
+      taxComponents: { table: 'tax_components', conflictTarget: 'id' },
       menuItems: { table: 'menu_items', conflictTarget: 'id' },
       modifierGroups: { table: 'modifier_groups', conflictTarget: 'id' },
       modifiers: { table: 'modifiers', conflictTarget: 'id' },
@@ -119,8 +127,6 @@ app.post('/sync', async (req: Request, res: Response) => {
         table: 'menu_item_modifier_groups',
         conflictTarget: 'menu_item_id,modifier_group_id',
       },
-      taxRules: { table: 'tax_rules', conflictTarget: 'id' },
-      taxComponents: { table: 'tax_components', conflictTarget: 'id' },
       comboDeals: { table: 'combo_deals', conflictTarget: 'id' },
       comboDealItems: { table: 'combo_deal_items', conflictTarget: 'id' },
       diningTables: { table: 'dining_tables', conflictTarget: 'id' },
