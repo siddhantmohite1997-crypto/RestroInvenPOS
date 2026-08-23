@@ -131,13 +131,13 @@ INSERT INTO restaurants (id, name, enabled)
 VALUES ('test-restaurant-1', 'Test Restaurant', true);
 
 -- Create test staff with PIN (1234)
--- PIN hash for "1234" = 03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f0dd27e25e1c
+-- PIN hash for "1234" = 03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4
 INSERT INTO staff (id, restaurant_id, name, pin_hash, role)
 VALUES (
   'staff-1',
   'test-restaurant-1',
   'Test Staff',
-  '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f0dd27e25e1c',
+  '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4',
   'cashier'
 );
 ```
@@ -262,7 +262,7 @@ Total at 50 restaurants: $25 + $7 = $32/month
 ### Sync fails: "Invalid PIN"
 - PIN hash doesn't match
 - Re-create staff record with correct hash
-- PIN hash for "1234": `03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f0dd27e25e1c`
+- PIN hash for "1234": `03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4`
 
 ### Sync fails: "Restaurant not found"
 - Restaurant doesn't exist in Supabase
