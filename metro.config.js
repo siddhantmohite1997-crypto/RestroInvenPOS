@@ -13,4 +13,19 @@ config.resolver.unstable_conditionNames = [
   '@tanstack/custom-condition',
 ];
 
+// Add wasm asset support (required by expo-sqlite on web)
+config.resolver.assetExts.push('wasm');
+
+// Add COEP and COOP headers to support SharedArrayBuffer (required by expo-sqlite on web).
+// expo-router's dev server serves the HTML document through a code path that bypasses
+// Metro's own `server.enhanceMiddleware` hook, so we patch http.ServerResponse directly
+// to guarantee every response (bundle, asset, or the document itself) carries the headers.
+const http = require('http');
+const originalWriteHead = http.ServerResponse.prototype.writeHead;
+http.ServerResponse.prototype.writeHead = function writeHead(...args) {
+  this.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+  this.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  return originalWriteHead.apply(this, args);
+};
+
 module.exports = config;
