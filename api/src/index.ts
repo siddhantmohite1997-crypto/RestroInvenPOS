@@ -58,6 +58,11 @@ async function verifyPinAuth(
     .single();
 
   if (restaurantError || !restaurant) {
+    if (restaurantError) {
+      // A real DB/network error (e.g. transient failure under concurrent load) looks
+      // identical to "doesn't exist" to the caller unless we log the actual cause here.
+      console.error(`verifyPinAuth: restaurant lookup failed for ${restaurantId}:`, restaurantError);
+    }
     return { valid: false, reason: 'Restaurant not found' };
   }
 
@@ -76,6 +81,9 @@ async function verifyPinAuth(
     .single();
 
   if (staffError || !staff) {
+    if (staffError) {
+      console.error(`verifyPinAuth: staff lookup failed for ${restaurantId}:`, staffError);
+    }
     return { valid: false, reason: 'Invalid PIN' };
   }
 
