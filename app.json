@@ -31,7 +31,7 @@
       "expo-mail-composer"
     ],
     "extra": {
-      "supabaseApiUrl": "http://localhost:3000",
+      "supabaseApiUrl": "https://restroinvenpos-production.up.railway.app",
       "ocrMode": "offline",
       "ocrEndpointUrl": {},
       "router": {},
