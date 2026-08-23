@@ -1,0 +1,4 @@
+# Claude Code tooling — not part of the app, and .agents/skills duplicates
+# .claude/skills content which trips up EAS's archiver on Windows (EPERM on symlink).
+.claude/
+.agents/
