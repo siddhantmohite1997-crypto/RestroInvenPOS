@@ -91,6 +91,60 @@ async function verifyPinAuth(
 }
 
 // ============================================================================
+// PAIR ENDPOINT
+// ============================================================================
+
+/**
+ * A phone with no local restaurant yet calls this once to attach itself to an
+ * existing cloud restaurant. Unlike /sync, this returns real data — the restaurant's
+ * business fields and the ONE staff record that matched the PIN (never other staff,
+ * never any password/hash) — so the app can seed its own local restaurant + staff row
+ * and let the user log in with the same PIN they just typed.
+ */
+app.post('/pair', async (req: Request, res: Response) => {
+  try {
+    const { restaurantId, pin } = req.body as { restaurantId?: string; pin?: string };
+
+    if (!restaurantId || !pin) {
+      return res.status(400).json({ error: 'restaurantId and pin required' });
+    }
+
+    const { data: restaurant, error: restaurantError } = await supabase
+      .from('restaurants')
+      .select('*')
+      .eq('id', restaurantId)
+      .single();
+
+    if (restaurantError || !restaurant) {
+      if (restaurantError) console.error(`/pair: restaurant lookup failed for ${restaurantId}:`, restaurantError);
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    if (!restaurant.enabled) {
+      return res.status(403).json({ error: 'Restaurant is currently disabled' });
+    }
+
+    const pinHash = crypto.createHash('sha256').update(pin).digest('hex');
+    const { data: staff, error: staffError } = await supabase
+      .from('staff')
+      .select('id, name, role')
+      .eq('restaurant_id', restaurantId)
+      .eq('pin_hash', pinHash)
+      .single();
+
+    if (staffError || !staff) {
+      if (staffError) console.error(`/pair: staff lookup failed for ${restaurantId}:`, staffError);
+      return res.status(401).json({ error: 'Invalid PIN' });
+    }
+
+    res.json({ restaurant, staff });
+  } catch (err) {
+    console.error('Pair error:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Pairing failed' });
+  }
+});
+
+// ============================================================================
 // SYNC ENDPOINT
 // ============================================================================
 
