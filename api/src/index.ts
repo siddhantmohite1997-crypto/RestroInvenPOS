@@ -150,7 +150,7 @@ app.post('/pair', async (req: Request, res: Response) => {
 
 app.post('/sync', async (req: Request, res: Response) => {
   try {
-    const { restaurantId, pin, syncData } = req.body as SyncRequest;
+    const { restaurantId, pin, syncData, checkOnly } = req.body as SyncRequest & { checkOnly?: boolean };
 
     if (!restaurantId || !pin) {
       return res.status(400).json({ error: 'restaurantId and pin required' });
@@ -160,6 +160,13 @@ app.post('/sync', async (req: Request, res: Response) => {
     const auth = await verifyPinAuth(restaurantId, pin);
     if (!auth.valid) {
       return res.status(401).json({ error: auth.reason || 'Authentication failed' });
+    }
+
+    // A lightweight "is this restaurant reachable and enabled" probe — same auth path as a
+    // real sync, but skips the data push entirely. Used at login (to warn immediately if the
+    // restaurant's been disabled) without pushing a full sync just to check status.
+    if (checkOnly) {
+      return res.json({ success: true, enabled: true, checkOnly: true });
     }
 
     // Sync data
