@@ -21,10 +21,10 @@ export default function LoginScreen() {
   async function submitPin(nextPin: string) {
     setIsVerifying(true);
     setError(null);
-    const ok = await login(nextPin);
+    const result = await login(nextPin);
     setIsVerifying(false);
-    if (!ok) {
-      setError('Incorrect PIN');
+    if (!result.ok) {
+      setError(result.message);
       setPin('');
     }
   }

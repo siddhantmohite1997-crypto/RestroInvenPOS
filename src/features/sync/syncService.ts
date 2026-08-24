@@ -22,6 +22,7 @@ import {
 } from '@/db/schema';
 import { getLastSyncedAt, setLastSyncedAt } from './syncConfig';
 import { filterChangedSince } from './syncDiff';
+import { logSyncAttempt } from './syncLogService';
 
 /**
  * Phase 8.5: Supabase Backend Edition
@@ -34,6 +35,16 @@ export interface SyncResult {
   syncedAt: Date;
 }
 
+// Backend URL is configured once per build in app.json's extra.supabaseApiUrl — not something
+// an individual restaurant enters, since every restaurant shares the same backend.
+function getApiUrl(): string {
+  const apiUrl = Constants.expoConfig?.extra?.supabaseApiUrl as string | undefined;
+  if (!apiUrl) {
+    throw new Error('Cloud sync is not configured for this app build. Contact support.');
+  }
+  return apiUrl;
+}
+
 /**
  * Call Supabase API backend for multi-tenant sync
  * Server verifies PIN against Supabase staff table and restaurant enabled status
@@ -43,14 +54,7 @@ async function callSupabaseSync(
   pin: string,
   syncData: Record<string, unknown>,
 ): Promise<{ pushedCounts: Record<string, number> }> {
-  // Backend URL is configured once per build in app.json's extra.supabaseApiUrl — not something
-  // an individual restaurant enters, since every restaurant shares the same backend.
-  const apiUrl = Constants.expoConfig?.extra?.supabaseApiUrl as string | undefined;
-  if (!apiUrl) {
-    throw new Error('Cloud sync is not configured for this app build. Contact support.');
-  }
-
-  const response = await fetch(`${apiUrl}/sync`, {
+  const response = await fetch(`${getApiUrl()}/sync`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -67,6 +71,52 @@ async function callSupabaseSync(
 
   const result = (await response.json()) as { pushedCounts: Record<string, number> };
   return result;
+}
+
+export interface RestaurantStatus {
+  /** false if the request couldn't even reach the server (offline, DNS, timeout, etc). */
+  online: boolean;
+  /** Only meaningful when online is true. */
+  enabled?: boolean;
+  reason?: string;
+}
+
+/**
+ * Lightweight probe used at login (and before an auto-sync) to check whether the
+ * restaurant is currently enabled, without pushing a full sync payload. Never throws —
+ * a network failure just means "we can't tell right now", which callers treat as
+ * "assume offline, don't block anything local".
+ */
+export async function checkRestaurantStatus(restaurantId: string, pin: string): Promise<RestaurantStatus> {
+  let apiUrl: string;
+  try {
+    apiUrl = getApiUrl();
+  } catch {
+    return { online: false };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const response = await fetch(`${apiUrl}/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ restaurantId, pin, syncData: {}, checkOnly: true }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (response.status === 401) {
+      const body = await response.json().catch(() => ({}));
+      return { online: true, enabled: false, reason: body.error || 'Restaurant is currently disabled' };
+    }
+    if (!response.ok) {
+      return { online: true, enabled: false, reason: 'Could not verify restaurant status' };
+    }
+    return { online: true, enabled: true };
+  } catch {
+    return { online: false };
+  }
 }
 
 /** Lightweight count for the status indicator — checks the highest-traffic tables (orders,
@@ -95,7 +145,12 @@ const SYNC_TIMEOUT_MS = 20000;
  * against a timeout so a bad config always surfaces a clear error instead
  * of hanging forever.
  */
-export async function syncNow(restaurantId: string, pin: string): Promise<SyncResult> {
+export async function syncNow(
+  restaurantId: string,
+  pin: string,
+  triggeredBy: 'manual' | 'auto' = 'manual',
+): Promise<SyncResult> {
+  const startedAt = new Date();
   let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
@@ -104,7 +159,24 @@ export async function syncNow(restaurantId: string, pin: string): Promise<SyncRe
     );
   });
   try {
-    return await Promise.race([syncNowInternal(restaurantId, pin), timeout]);
+    const result = await Promise.race([syncNowInternal(restaurantId, pin), timeout]);
+    await logSyncAttempt({
+      restaurantId,
+      triggeredBy,
+      status: 'success',
+      pushedCounts: result.pushedCounts,
+      startedAt,
+    });
+    return result;
+  } catch (err) {
+    await logSyncAttempt({
+      restaurantId,
+      triggeredBy,
+      status: 'error',
+      message: err instanceof Error ? err.message : String(err),
+      startedAt,
+    });
+    throw err;
   } finally {
     clearTimeout(timer!);
   }
