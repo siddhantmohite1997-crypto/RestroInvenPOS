@@ -1,15 +1,18 @@
 import { useState } from 'react';
-import { StyleSheet, Text, View, Pressable } from 'react-native';
-import { Redirect } from 'expo-router';
+import { Alert, StyleSheet, Text, View, Pressable } from 'react-native';
+import { Redirect, useRouter } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
+import { resetDeviceSetup } from '@/features/setup/setupService';
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'del'];
 const MAX_PIN_LENGTH = 6;
 
 export default function LoginScreen() {
+  const router = useRouter();
   const currentUser = useAuthStore((s) => s.currentUser);
   const restaurant = useAuthStore((s) => s.restaurant);
   const login = useAuthStore((s) => s.login);
+  const hydrate = useAuthStore((s) => s.hydrate);
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -44,6 +47,25 @@ export default function LoginScreen() {
     }
   }
 
+  function onTroubleLoggingIn() {
+    Alert.alert(
+      'Reset this device?',
+      "This removes all local data on this device — including anything not yet synced to the cloud — and lets you pair it with a restaurant again. This doesn't affect any other device or the restaurant's cloud data.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset device',
+          style: 'destructive',
+          onPress: async () => {
+            await resetDeviceSetup();
+            await hydrate();
+            router.replace('/(setup)/welcome');
+          },
+        },
+      ],
+    );
+  }
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>{restaurant?.name ?? 'POS'}</Text>
@@ -69,6 +91,10 @@ export default function LoginScreen() {
           </Pressable>
         ))}
       </View>
+
+      <Pressable onPress={onTroubleLoggingIn} style={styles.troubleLink}>
+        <Text style={styles.troubleLinkText}>Trouble logging in?</Text>
+      </Pressable>
     </View>
   );
 }
@@ -90,4 +116,6 @@ const styles = StyleSheet.create({
   },
   keyHidden: { opacity: 0 },
   keyText: { fontSize: 26, fontWeight: '600' },
+  troubleLink: { marginTop: 24, padding: 8 },
+  troubleLinkText: { color: '#999', fontSize: 13, textDecorationLine: 'underline' },
 });
