@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, StyleSheet, Text, View, Pressable } from 'react-native';
 import { Redirect, useRouter } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
@@ -6,6 +6,11 @@ import { resetDeviceSetup } from '@/features/setup/setupService';
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'del'];
 const MAX_PIN_LENGTH = 6;
+// PINs can be 4-6 digits, so 4 typed digits doesn't necessarily mean the PIN is complete —
+// submitting immediately at length 4 would reject any 5-6 digit PIN after its 4th digit.
+// Wait briefly for more digits before trying; typing straight through to MAX_PIN_LENGTH
+// still submits immediately with no wait, since no more digits are possible at that point.
+const SUBMIT_DEBOUNCE_MS = 500;
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -16,6 +21,13 @@ export default function LoginScreen() {
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
 
   if (currentUser) {
     return <Redirect href="/(app)/orders" />;
@@ -34,6 +46,10 @@ export default function LoginScreen() {
 
   function onKeyPress(key: string) {
     if (isVerifying || !key) return;
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
     if (key === 'del') {
       setPin((p) => p.slice(0, -1));
       setError(null);
@@ -42,8 +58,10 @@ export default function LoginScreen() {
     const nextPin = (pin + key).slice(0, MAX_PIN_LENGTH);
     setPin(nextPin);
     setError(null);
-    if (nextPin.length >= 4) {
+    if (nextPin.length === MAX_PIN_LENGTH) {
       submitPin(nextPin);
+    } else if (nextPin.length >= 4) {
+      debounceRef.current = setTimeout(() => submitPin(nextPin), SUBMIT_DEBOUNCE_MS);
     }
   }
 

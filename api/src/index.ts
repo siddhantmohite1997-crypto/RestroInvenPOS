@@ -225,11 +225,11 @@ app.post('/sync', async (req: Request, res: Response) => {
         const { changedAt: _changedAt, ...cleanRow } = row;
         const snakeRow = rowToSnakeCase(cleanRow);
 
-        // Add restaurant_id for filtering
-        const rowWithRestaurant = {
-          ...snakeRow,
-          restaurant_id: restaurantId,
-        };
+        // Stamp restaurant_id for filtering — except on the restaurants table itself, which
+        // IS the restaurant record and has no such column (it doesn't reference itself).
+        // Every other synced table gets it uniformly, including junction tables that don't
+        // have it locally, for RLS/isolation defense-in-depth.
+        const rowWithRestaurant = jsKey === 'restaurants' ? snakeRow : { ...snakeRow, restaurant_id: restaurantId };
 
         // Upsert (insert or update)
         const { error } = await supabase.from(pgTable).upsert(rowWithRestaurant, {
