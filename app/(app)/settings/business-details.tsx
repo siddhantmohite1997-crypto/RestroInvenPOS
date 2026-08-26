@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Switch, Text, View, Pressable } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Switch, Text, View, Pressable } from 'react-native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { updateBusinessDetails, type BusinessDetailsInput } from '@/features/restaurant/restaurantService';
@@ -72,6 +72,10 @@ export default function BusinessDetailsScreen() {
     onSuccess: () => {
       hydrate();
       queryClient.invalidateQueries();
+      Alert.alert('Saved', 'Business details updated.');
+    },
+    onError: (err) => {
+      Alert.alert('Save failed', err instanceof Error ? err.message : 'Could not save business details.');
     },
   });
 
