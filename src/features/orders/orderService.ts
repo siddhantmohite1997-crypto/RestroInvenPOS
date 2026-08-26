@@ -1,6 +1,16 @@
 import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
-import { orders, orderItems, orderItemModifiers, discounts, payments, menuItems, comboDeals, taxRules, restaurants } from '@/db/schema';
+import {
+  orders,
+  orderItems,
+  orderItemModifiers,
+  discounts,
+  payments,
+  menuItems,
+  comboDeals,
+  taxRules,
+  restaurants,
+} from '@/db/schema';
 import { generateId } from '@/lib/id';
 
 import { calculateOrderTotals, round2 } from '@/features/tax/taxEngine';
@@ -81,7 +91,8 @@ export async function getOrder(id: string): Promise<OrderWithItems | null> {
 
   const billDiscount =
     (await db.query.discounts.findFirst({
-      where: (d, { and: andOp, eq: eqOp, isNull: isNullOp }) => andOp(eqOp(d.orderId, id), isNullOp(d.orderItemId)),
+      where: (d, { and: andOp, eq: eqOp, isNull: isNullOp }) =>
+        andOp(eqOp(d.orderId, id), isNullOp(d.orderItemId)),
     })) ?? null;
 
   return { ...order, items: itemsWithModifiers, billDiscount };
@@ -97,7 +108,8 @@ export async function listOpenOrders(restaurantId: string): Promise<Order[]> {
 
 export async function listParkedOrders(restaurantId: string): Promise<Order[]> {
   return db.query.orders.findMany({
-    where: (o, { and: andOp, eq: eqOp }) => andOp(eqOp(o.restaurantId, restaurantId), eqOp(o.status, 'parked')),
+    where: (o, { and: andOp, eq: eqOp }) =>
+      andOp(eqOp(o.restaurantId, restaurantId), eqOp(o.status, 'parked')),
     orderBy: (o, { desc }) => desc(o.parkedAt),
   });
 }
@@ -111,6 +123,42 @@ export interface AddItemInput {
 }
 
 export async function addItemToOrder(orderId: string, input: AddItemInput): Promise<void> {
+  // Plain re-taps of the same item (no modifiers, no notes — e.g. the quick-add menu grid)
+  // should bump the quantity on the existing line rather than create a new one; a customized
+  // line (modifiers and/or notes) always stays its own row, since merging it with a
+  // differently-customized order of the same item would silently drop the customization.
+  const isPlainAdd = (input.modifiers?.length ?? 0) === 0 && !input.notes;
+  if (isPlainAdd) {
+    const existing = await db.query.orderItems.findFirst({
+      where: (oi, { and: andOp, eq: eqOp, isNull: isNullOp }) =>
+        andOp(
+          eqOp(oi.orderId, orderId),
+          eqOp(oi.isVoided, false),
+          isNullOp(oi.notes),
+          input.comboDealId
+            ? eqOp(oi.comboDealId, input.comboDealId)
+            : eqOp(oi.menuItemId, input.menuItemId!),
+        ),
+    });
+    if (existing) {
+      const existingModifiers = await db.query.orderItemModifiers.findMany({
+        where: (m, { eq: eqOp }) => eqOp(m.orderItemId, existing.id),
+      });
+      if (existingModifiers.length === 0) {
+        const quantity = existing.quantity + input.quantity;
+        await db
+          .update(orderItems)
+          .set({
+            quantity,
+            lineSubtotal: round2(existing.unitPriceSnapshot * quantity),
+            updatedAt: new Date(),
+          })
+          .where(eq(orderItems.id, existing.id));
+        return;
+      }
+    }
+  }
+
   let name: string;
   let basePrice: number;
   let taxRuleId: string | null;
@@ -119,14 +167,18 @@ export async function addItemToOrder(orderId: string, input: AddItemInput): Prom
   let comboDealId: string | null = null;
 
   if (input.comboDealId) {
-    const combo = await db.query.comboDeals.findFirst({ where: eq(comboDeals.id, input.comboDealId) });
+    const combo = await db.query.comboDeals.findFirst({
+      where: eq(comboDeals.id, input.comboDealId),
+    });
     if (!combo) throw new Error('Combo not found');
     comboDealId = combo.id;
     name = combo.name;
     basePrice = combo.price;
     taxRuleId = combo.taxRuleId;
   } else {
-    const menuItem = await db.query.menuItems.findFirst({ where: eq(menuItems.id, input.menuItemId!) });
+    const menuItem = await db.query.menuItems.findFirst({
+      where: eq(menuItems.id, input.menuItemId!),
+    });
     if (!menuItem) throw new Error('Menu item not found');
     menuItemId = menuItem.id;
     name = menuItem.name;
@@ -205,7 +257,10 @@ export async function removeItemFromOrder(orderItemId: string): Promise<void> {
 }
 
 export async function parkOrder(orderId: string): Promise<void> {
-  await db.update(orders).set({ status: 'parked', parkedAt: new Date() }).where(eq(orders.id, orderId));
+  await db
+    .update(orders)
+    .set({ status: 'parked', parkedAt: new Date() })
+    .where(eq(orders.id, orderId));
 }
 
 export async function resumeOrder(orderId: string): Promise<void> {
@@ -225,7 +280,8 @@ export async function applyBillDiscount(orderId: string, input: ApplyDiscountInp
   await clearBillDiscount(orderId);
 
   const items = await db.query.orderItems.findMany({
-    where: (oi, { and: andOp, eq: eqOp }) => andOp(eqOp(oi.orderId, orderId), eqOp(oi.isVoided, false)),
+    where: (oi, { and: andOp, eq: eqOp }) =>
+      andOp(eqOp(oi.orderId, orderId), eqOp(oi.isVoided, false)),
   });
   const shares = apportionDiscount(
     items.map((i) => ({ id: i.id, lineSubtotal: i.lineSubtotal })),
@@ -272,7 +328,8 @@ export async function applyBillDiscount(orderId: string, input: ApplyDiscountInp
 
 export async function clearBillDiscount(orderId: string): Promise<void> {
   const existing = await db.query.discounts.findMany({
-    where: (d, { and: andOp, eq: eqOp, isNull: isNullOp }) => andOp(eqOp(d.orderId, orderId), isNullOp(d.orderItemId)),
+    where: (d, { and: andOp, eq: eqOp, isNull: isNullOp }) =>
+      andOp(eqOp(d.orderId, orderId), isNullOp(d.orderItemId)),
   });
   for (const d of existing) {
     await db.delete(discounts).where(eq(discounts.id, d.id));
@@ -287,11 +344,14 @@ export async function clearBillDiscount(orderId: string): Promise<void> {
 async function recalculateOrderTotals(orderId: string): Promise<void> {
   const order = await db.query.orders.findFirst({ where: eq(orders.id, orderId) });
   if (!order) return;
-  const restaurant = await db.query.restaurants.findFirst({ where: eq(restaurants.id, order.restaurantId) });
+  const restaurant = await db.query.restaurants.findFirst({
+    where: eq(restaurants.id, order.restaurantId),
+  });
   if (!restaurant) return;
 
   const items = await db.query.orderItems.findMany({
-    where: (oi, { and: andOp, eq: eqOp }) => andOp(eqOp(oi.orderId, orderId), eqOp(oi.isVoided, false)),
+    where: (oi, { and: andOp, eq: eqOp }) =>
+      andOp(eqOp(oi.orderId, orderId), eqOp(oi.isVoided, false)),
   });
 
   const totals = calculateOrderTotals({

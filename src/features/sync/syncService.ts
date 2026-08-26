@@ -73,6 +73,36 @@ async function callSupabaseSync(
   return result;
 }
 
+export interface PushStaffInput {
+  restaurantId: string;
+  /** PIN of the staff member performing the edit — must already exist in the cloud staff
+   * table (normally the owner, created there at registration time). */
+  authPin: string;
+  staffId: string;
+  name: string;
+  role: string;
+  /** Omit on an edit that doesn't change the PIN. */
+  pin?: string;
+}
+
+/**
+ * Push a locally-created/edited staff member to the cloud staff table. Staff management
+ * (Settings > Staff) is otherwise entirely local and never part of the regular sync payload —
+ * this is the only path that makes a staff member usable for pairing another device or visible
+ * in the admin panel. Best-effort: callers should treat failure as non-fatal to the local save.
+ */
+export async function pushStaffToCloud(input: PushStaffInput): Promise<void> {
+  const response = await fetch(`${getApiUrl()}/staff`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || 'Could not sync staff member to the cloud.');
+  }
+}
+
 export interface RestaurantStatus {
   /** false if the request couldn't even reach the server (offline, DNS, timeout, etc). */
   online: boolean;
@@ -87,7 +117,10 @@ export interface RestaurantStatus {
  * a network failure just means "we can't tell right now", which callers treat as
  * "assume offline, don't block anything local".
  */
-export async function checkRestaurantStatus(restaurantId: string, pin: string): Promise<RestaurantStatus> {
+export async function checkRestaurantStatus(
+  restaurantId: string,
+  pin: string,
+): Promise<RestaurantStatus> {
   let apiUrl: string;
   try {
     apiUrl = getApiUrl();
@@ -108,7 +141,11 @@ export async function checkRestaurantStatus(restaurantId: string, pin: string): 
 
     if (response.status === 401) {
       const body = await response.json().catch(() => ({}));
-      return { online: true, enabled: false, reason: body.error || 'Restaurant is currently disabled' };
+      return {
+        online: true,
+        enabled: false,
+        reason: body.error || 'Restaurant is currently disabled',
+      };
     }
     if (!response.ok) {
       return { online: true, enabled: false, reason: 'Could not verify restaurant status' };
@@ -132,9 +169,18 @@ export async function getPendingChangeCount(restaurantId: string): Promise<numbe
   ]);
 
   return (
-    filterChangedSince(orderRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt).length +
-    filterChangedSince(menuItemRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt).length +
-    filterChangedSince(categoryRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt).length
+    filterChangedSince(
+      orderRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+      lastSyncedAt,
+    ).length +
+    filterChangedSince(
+      menuItemRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+      lastSyncedAt,
+    ).length +
+    filterChangedSince(
+      categoryRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+      lastSyncedAt,
+    ).length
   );
 }
 
@@ -187,16 +233,31 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
   const syncData: Record<string, unknown> = {};
 
   // Collect all changed data from local DB
-  const restaurant = await db.query.restaurants.findFirst({ where: eq(restaurants.id, restaurantId) });
+  const restaurant = await db.query.restaurants.findFirst({
+    where: eq(restaurants.id, restaurantId),
+  });
   if (restaurant) {
-    syncData.restaurants = filterChangedSince([{ ...restaurant, changedAt: restaurant.updatedAt }], lastSyncedAt);
+    syncData.restaurants = filterChangedSince(
+      [{ ...restaurant, changedAt: restaurant.updatedAt }],
+      lastSyncedAt,
+    );
   }
 
-  const categoryRows = await db.query.categories.findMany({ where: eq(categories.restaurantId, restaurantId) });
-  syncData.categories = filterChangedSince(categoryRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
+  const categoryRows = await db.query.categories.findMany({
+    where: eq(categories.restaurantId, restaurantId),
+  });
+  syncData.categories = filterChangedSince(
+    categoryRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+    lastSyncedAt,
+  );
 
-  const menuItemRows = await db.query.menuItems.findMany({ where: eq(menuItems.restaurantId, restaurantId) });
-  syncData.menuItems = filterChangedSince(menuItemRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
+  const menuItemRows = await db.query.menuItems.findMany({
+    where: eq(menuItems.restaurantId, restaurantId),
+  });
+  syncData.menuItems = filterChangedSince(
+    menuItemRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+    lastSyncedAt,
+  );
 
   const modifierGroupRows = await db.query.modifierGroups.findMany({
     where: eq(modifierGroups.restaurantId, restaurantId),
@@ -208,39 +269,67 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
 
   const modifierGroupIds = modifierGroupRows.map((g) => g.id);
   syncData.modifiers = modifierGroupIds.length
-    ? await db.query.modifiers.findMany({ where: inArray(modifiers.modifierGroupId, modifierGroupIds) })
+    ? await db.query.modifiers.findMany({
+        where: inArray(modifiers.modifierGroupId, modifierGroupIds),
+      })
     : [];
 
   const menuItemIds = menuItemRows.map((i) => i.id);
   syncData.menuItemModifierGroups = menuItemIds.length
-    ? await db.query.menuItemModifierGroups.findMany({ where: inArray(menuItemModifierGroups.menuItemId, menuItemIds) })
+    ? await db.query.menuItemModifierGroups.findMany({
+        where: inArray(menuItemModifierGroups.menuItemId, menuItemIds),
+      })
     : [];
 
-  const taxRuleRows = await db.query.taxRules.findMany({ where: eq(taxRules.restaurantId, restaurantId) });
-  syncData.taxRules = filterChangedSince(taxRuleRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
+  const taxRuleRows = await db.query.taxRules.findMany({
+    where: eq(taxRules.restaurantId, restaurantId),
+  });
+  syncData.taxRules = filterChangedSince(
+    taxRuleRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+    lastSyncedAt,
+  );
 
   const taxRuleIds = taxRuleRows.map((r) => r.id);
   syncData.taxComponents = taxRuleIds.length
     ? await db.query.taxComponents.findMany({ where: inArray(taxComponents.taxRuleId, taxRuleIds) })
     : [];
 
-  const comboRows = await db.query.comboDeals.findMany({ where: eq(comboDeals.restaurantId, restaurantId) });
-  syncData.comboDeals = filterChangedSince(comboRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
+  const comboRows = await db.query.comboDeals.findMany({
+    where: eq(comboDeals.restaurantId, restaurantId),
+  });
+  syncData.comboDeals = filterChangedSince(
+    comboRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+    lastSyncedAt,
+  );
 
   const comboIds = comboRows.map((c) => c.id);
   syncData.comboDealItems = comboIds.length
-    ? await db.query.comboDealItems.findMany({ where: inArray(comboDealItems.comboDealId, comboIds) })
+    ? await db.query.comboDealItems.findMany({
+        where: inArray(comboDealItems.comboDealId, comboIds),
+      })
     : [];
 
-  const tableRows = await db.query.diningTables.findMany({ where: eq(diningTables.restaurantId, restaurantId) });
-  syncData.diningTables = filterChangedSince(tableRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
+  const tableRows = await db.query.diningTables.findMany({
+    where: eq(diningTables.restaurantId, restaurantId),
+  });
+  syncData.diningTables = filterChangedSince(
+    tableRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+    lastSyncedAt,
+  );
 
-  const orderRows = await db.query.orders.findMany({ where: eq(orders.restaurantId, restaurantId) });
-  syncData.orders = filterChangedSince(orderRows.map((r) => ({ ...r, changedAt: r.updatedAt })), lastSyncedAt);
+  const orderRows = await db.query.orders.findMany({
+    where: eq(orders.restaurantId, restaurantId),
+  });
+  syncData.orders = filterChangedSince(
+    orderRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+    lastSyncedAt,
+  );
 
   const orderIds = orderRows.map((o) => o.id);
   if (orderIds.length) {
-    const orderItemRows = await db.query.orderItems.findMany({ where: inArray(orderItems.orderId, orderIds) });
+    const orderItemRows = await db.query.orderItems.findMany({
+      where: inArray(orderItems.orderId, orderIds),
+    });
     syncData.orderItems = filterChangedSince(
       orderItemRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
       lastSyncedAt,
@@ -248,15 +337,26 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
 
     const orderItemIds = orderItemRows.map((i) => i.id);
     syncData.orderItemModifiers = orderItemIds.length
-      ? await db.query.orderItemModifiers.findMany({ where: inArray(orderItemModifiers.orderItemId, orderItemIds) })
+      ? await db.query.orderItemModifiers.findMany({
+          where: inArray(orderItemModifiers.orderItemId, orderItemIds),
+        })
       : [];
 
-    syncData.discounts = await db.query.discounts.findMany({ where: inArray(discounts.orderId, orderIds) });
-    syncData.payments = await db.query.payments.findMany({ where: inArray(payments.orderId, orderIds) });
+    syncData.discounts = await db.query.discounts.findMany({
+      where: inArray(discounts.orderId, orderIds),
+    });
+    syncData.payments = await db.query.payments.findMany({
+      where: inArray(payments.orderId, orderIds),
+    });
   }
 
-  const auditRows = await db.query.auditLogs.findMany({ where: eq(auditLogs.restaurantId, restaurantId) });
-  syncData.auditLogs = filterChangedSince(auditRows.map((r) => ({ ...r, changedAt: r.createdAt })), lastSyncedAt);
+  const auditRows = await db.query.auditLogs.findMany({
+    where: eq(auditLogs.restaurantId, restaurantId),
+  });
+  syncData.auditLogs = filterChangedSince(
+    auditRows.map((r) => ({ ...r, changedAt: r.createdAt })),
+    lastSyncedAt,
+  );
 
   // Call Supabase API to sync (server handles all PostgreSQL writes)
   const result = await callSupabaseSync(restaurantId, pin, syncData);

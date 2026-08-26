@@ -5,7 +5,10 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { getOrder, updateOrderContact, voidOrder } from '@/features/orders/orderService';
 import { needsVoidOverride } from '@/features/auth/permissions';
-import { computeTaxComponentBreakdown, toReceiptLineItems } from '@/features/receipts/receiptEngine';
+import {
+  computeTaxComponentBreakdown,
+  toReceiptLineItems,
+} from '@/features/receipts/receiptEngine';
 import {
   buildReceiptHtml,
   buildReceiptText,
@@ -14,12 +17,21 @@ import {
   type ReceiptInput,
 } from '@/features/receipts/receiptHtml';
 import { printReceiptHtml, receiptPdfUri } from '@/features/receipts/printerService';
-import { sendReceiptEmail, sendReceiptSms, shareReceiptFile, shareReceiptPdfToWhatsApp } from '@/features/receipts/shareService';
+import {
+  sendReceiptEmail,
+  sendReceiptSms,
+  shareReceiptFile,
+  shareReceiptPdfToWhatsApp,
+} from '@/features/receipts/shareService';
 import { FormField } from '@/components/FormField';
 import { Button } from '@/components/Button';
 import { PinOverrideModal } from '@/components/PinOverrideModal';
 
-const ORDER_TYPE_LABEL: Record<string, string> = { dine_in: 'Dine-in', takeaway: 'Takeaway', delivery: 'Delivery' };
+const ORDER_TYPE_LABEL: Record<string, string> = {
+  dine_in: 'Dine-in',
+  takeaway: 'Takeaway',
+  delivery: 'Delivery',
+};
 
 export default function ReceiptScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -153,7 +165,9 @@ export default function ReceiptScreen() {
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.receiptCard}>
           <Text style={styles.businessName}>{receiptInput.business.name}</Text>
-          {receiptInput.business.addressLine1 && <Text style={styles.muted}>{receiptInput.business.addressLine1}</Text>}
+          {receiptInput.business.addressLine1 && (
+            <Text style={styles.muted}>{receiptInput.business.addressLine1}</Text>
+          )}
           {receiptInput.business.taxId && (
             <Text style={styles.muted}>
               {receiptInput.business.taxIdLabel}: {receiptInput.business.taxId}
@@ -181,30 +195,82 @@ export default function ReceiptScreen() {
           {receiptInput.taxComponents.map((c) => (
             <TotalRow key={c.label} label={c.label} value={c.amount} />
           ))}
-          {order.serviceChargeTotal > 0 && <TotalRow label="Service charge" value={order.serviceChargeTotal} />}
-          {order.roundingAdjustment !== 0 && <TotalRow label="Rounding" value={order.roundingAdjustment} />}
+          {order.serviceChargeTotal > 0 && (
+            <TotalRow label="Service charge" value={order.serviceChargeTotal} />
+          )}
+          {order.roundingAdjustment !== 0 && (
+            <TotalRow label="Rounding" value={order.roundingAdjustment} />
+          )}
           <TotalRow label="Total" value={order.grandTotal} emphasize />
         </View>
 
-        <Button label={printMutation.isPending ? 'Printing…' : 'Print receipt'} onPress={() => printMutation.mutate()} style={styles.button} />
-        <Button label="Share as PDF" variant="secondary" onPress={() => shareMutation.mutate()} style={styles.button} />
+        <Button
+          label={printMutation.isPending ? 'Printing…' : 'Print receipt'}
+          onPress={() => printMutation.mutate()}
+          style={styles.button}
+        />
+        <Button label="Done" onPress={() => router.dismissTo('/orders')} style={styles.button} />
+        <Button
+          label="Share as PDF"
+          variant="secondary"
+          onPress={() => shareMutation.mutate()}
+          style={styles.button}
+        />
 
         <Text style={styles.sectionLabel}>Send digitally</Text>
-        <FormField label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="For SMS / WhatsApp" />
+        <FormField
+          label="Phone"
+          value={phone}
+          onChangeText={setPhone}
+          keyboardType="phone-pad"
+          placeholder="For SMS / WhatsApp"
+        />
         <View style={styles.row}>
-          <Button label="SMS" variant="secondary" onPress={() => smsMutation.mutate()} disabled={!phone.trim()} style={{ flex: 1 }} />
-          <Button label="WhatsApp" variant="secondary" onPress={() => whatsappMutation.mutate()} disabled={!phone.trim()} style={{ flex: 1 }} />
+          <Button
+            label="SMS"
+            variant="secondary"
+            onPress={() => smsMutation.mutate()}
+            disabled={!phone.trim()}
+            style={{ flex: 1 }}
+          />
+          <Button
+            label="WhatsApp"
+            variant="secondary"
+            onPress={() => whatsappMutation.mutate()}
+            disabled={!phone.trim()}
+            style={{ flex: 1 }}
+          />
         </View>
-        <FormField label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" placeholder="For email receipt" />
-        <Button label="Email receipt" variant="secondary" onPress={() => emailMutation.mutate()} disabled={!email.trim()} style={styles.button} />
-
-        <Button label="Done" onPress={() => router.dismissTo('/orders')} style={styles.doneButton} />
+        <FormField
+          label="Email"
+          value={email}
+          onChangeText={setEmail}
+          keyboardType="email-address"
+          placeholder="For email receipt"
+        />
+        <Button
+          label="Email receipt"
+          variant="secondary"
+          onPress={() => emailMutation.mutate()}
+          disabled={!email.trim()}
+          style={styles.button}
+        />
 
         {order.status === 'paid' && (
           <>
             <Text style={styles.sectionLabel}>Void this bill</Text>
-            <FormField label="Reason" value={voidReason} onChangeText={setVoidReason} placeholder="Required to void" />
-            <Button label="Void Order" variant="danger" onPress={onVoidPress} style={styles.button} />
+            <FormField
+              label="Reason"
+              value={voidReason}
+              onChangeText={setVoidReason}
+              placeholder="Required to void"
+            />
+            <Button
+              label="Void Order"
+              variant="danger"
+              onPress={onVoidPress}
+              style={styles.button}
+            />
           </>
         )}
       </ScrollView>
@@ -224,7 +290,15 @@ export default function ReceiptScreen() {
   );
 }
 
-function TotalRow({ label, value, emphasize }: { label: string; value: number; emphasize?: boolean }) {
+function TotalRow({
+  label,
+  value,
+  emphasize,
+}: {
+  label: string;
+  value: number;
+  emphasize?: boolean;
+}) {
   return (
     <View style={styles.totalRow}>
       <Text style={[styles.totalLabel, emphasize && styles.totalEmphasize]}>{label}</Text>
@@ -253,5 +327,4 @@ const styles = StyleSheet.create({
   button: { marginBottom: 10 },
   row: { flexDirection: 'row', gap: 10 },
   sectionLabel: { fontSize: 14, fontWeight: '600', marginTop: 8, marginBottom: 8, color: '#333' },
-  doneButton: { marginTop: 16 },
 });

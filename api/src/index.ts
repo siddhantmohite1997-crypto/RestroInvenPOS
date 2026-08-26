@@ -61,7 +61,10 @@ async function verifyPinAuth(
     if (restaurantError) {
       // A real DB/network error (e.g. transient failure under concurrent load) looks
       // identical to "doesn't exist" to the caller unless we log the actual cause here.
-      console.error(`verifyPinAuth: restaurant lookup failed for ${restaurantId}:`, restaurantError);
+      console.error(
+        `verifyPinAuth: restaurant lookup failed for ${restaurantId}:`,
+        restaurantError,
+      );
     }
     return { valid: false, reason: 'Restaurant not found' };
   }
@@ -116,7 +119,8 @@ app.post('/pair', async (req: Request, res: Response) => {
       .single();
 
     if (restaurantError || !restaurant) {
-      if (restaurantError) console.error(`/pair: restaurant lookup failed for ${restaurantId}:`, restaurantError);
+      if (restaurantError)
+        console.error(`/pair: restaurant lookup failed for ${restaurantId}:`, restaurantError);
       return res.status(404).json({ error: 'Restaurant not found' });
     }
 
@@ -145,28 +149,107 @@ app.post('/pair', async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// STAFF ENDPOINT
+// ============================================================================
+
+/**
+ * Push a staff member created/edited on-device to the cloud staff table. Local staff
+ * management (Settings > Staff) never went through this before — it only ever wrote to the
+ * device's local SQLite `users` table, so a staff member added on one device could never be
+ * used to pair another device, never showed up in the admin panel, and would be lost for good
+ * if that device was ever reset. `authPin` must belong to an existing, already-cloud-known
+ * staff member of the same restaurant (normally whoever is logged in and doing the editing).
+ */
+app.post('/staff', async (req: Request, res: Response) => {
+  try {
+    const { restaurantId, authPin, staffId, name, role, pin } = req.body as {
+      restaurantId?: string;
+      authPin?: string;
+      staffId?: string;
+      name?: string;
+      role?: string;
+      pin?: string;
+    };
+
+    if (!restaurantId || !authPin || !staffId || !name || !role) {
+      return res
+        .status(400)
+        .json({ error: 'restaurantId, authPin, staffId, name, and role required' });
+    }
+
+    const auth = await verifyPinAuth(restaurantId, authPin);
+    if (!auth.valid) {
+      return res.status(401).json({ error: auth.reason || 'Authentication failed' });
+    }
+
+    const upsertRow: Record<string, unknown> = {
+      id: staffId,
+      restaurant_id: restaurantId,
+      name,
+      role,
+    };
+    if (pin) {
+      upsertRow.pin_hash = crypto.createHash('sha256').update(pin).digest('hex');
+    }
+
+    const { error } = await supabase.from('staff').upsert(upsertRow, { onConflict: 'id' });
+    if (error) {
+      console.error(`Error upserting staff ${staffId}:`, error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Staff push error:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Staff push failed' });
+  }
+});
+
+// ============================================================================
 // SYNC ENDPOINT
 // ============================================================================
 
 app.post('/sync', async (req: Request, res: Response) => {
   try {
-    const { restaurantId, pin, syncData, checkOnly } = req.body as SyncRequest & { checkOnly?: boolean };
+    const { restaurantId, pin, syncData, checkOnly } = req.body as SyncRequest & {
+      checkOnly?: boolean;
+    };
 
     if (!restaurantId || !pin) {
       return res.status(400).json({ error: 'restaurantId and pin required' });
+    }
+
+    // A lightweight "is this restaurant reachable and enabled" probe used at login. This must
+    // NOT go through verifyPinAuth (which also requires the PIN to match a row in the cloud
+    // staff table): staff added on-device via Settings > Staff are local-only until explicitly
+    // pushed to the cloud, so gating this on staff-PIN match would lock a brand new staff
+    // member out of their own device just because Supabase doesn't know them yet. All this
+    // probe needs to answer is "does this restaurant exist and is it enabled".
+    if (checkOnly) {
+      const { data: restaurant, error: restaurantError } = await supabase
+        .from('restaurants')
+        .select('enabled')
+        .eq('id', restaurantId)
+        .single();
+
+      if (restaurantError || !restaurant) {
+        if (restaurantError)
+          console.error(
+            `/sync checkOnly: restaurant lookup failed for ${restaurantId}:`,
+            restaurantError,
+          );
+        return res.status(404).json({ error: 'Restaurant not found' });
+      }
+      if (!restaurant.enabled) {
+        return res.status(401).json({ error: 'Restaurant is currently disabled' });
+      }
+      return res.json({ success: true, enabled: true, checkOnly: true });
     }
 
     // Verify PIN and restaurant
     const auth = await verifyPinAuth(restaurantId, pin);
     if (!auth.valid) {
       return res.status(401).json({ error: auth.reason || 'Authentication failed' });
-    }
-
-    // A lightweight "is this restaurant reachable and enabled" probe — same auth path as a
-    // real sync, but skips the data push entirely. Used at login (to warn immediately if the
-    // restaurant's been disabled) without pushing a full sync just to check status.
-    if (checkOnly) {
-      return res.json({ success: true, enabled: true, checkOnly: true });
     }
 
     // Sync data
@@ -207,7 +290,8 @@ app.post('/sync', async (req: Request, res: Response) => {
       auditLogs: { table: 'audit_logs', conflictTarget: 'id' },
     };
 
-    const toSnakeCase = (key: string) => key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+    const toSnakeCase = (key: string) =>
+      key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
     const rowToSnakeCase = (row: Record<string, unknown>) => {
       const result: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(row)) {
@@ -229,7 +313,8 @@ app.post('/sync', async (req: Request, res: Response) => {
         // IS the restaurant record and has no such column (it doesn't reference itself).
         // Every other synced table gets it uniformly, including junction tables that don't
         // have it locally, for RLS/isolation defense-in-depth.
-        const rowWithRestaurant = jsKey === 'restaurants' ? snakeRow : { ...snakeRow, restaurant_id: restaurantId };
+        const rowWithRestaurant =
+          jsKey === 'restaurants' ? snakeRow : { ...snakeRow, restaurant_id: restaurantId };
 
         // Upsert (insert or update)
         const { error } = await supabase.from(pgTable).upsert(rowWithRestaurant, {

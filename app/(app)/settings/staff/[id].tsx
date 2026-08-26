@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
+import { useAuthStore } from '@/store/authStore';
 import { createStaff, listStaff, updateStaff } from '@/features/staff/staffService';
+import { pushStaffToCloud } from '@/features/sync/syncService';
 import type { StaffRole } from '@/features/auth/permissions';
 import { FormField } from '@/components/FormField';
 import { Button } from '@/components/Button';
@@ -19,6 +21,7 @@ export default function StaffEditorScreen() {
   const isNew = id === 'new';
   const router = useRouter();
   const restaurantId = useRestaurantId();
+  const currentPin = useAuthStore((s) => s.currentPin);
   const queryClient = useQueryClient();
 
   const [name, setName] = useState('');
@@ -46,10 +49,31 @@ export default function StaffEditorScreen() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (isNew) {
-        await createStaff({ restaurantId, name, role, pin });
-      } else {
+      const staffId = isNew ? await createStaff({ restaurantId, name, role, pin }) : id;
+      if (!isNew) {
         await updateStaff(id, { name, role, isActive, pin: pin || undefined });
+      }
+      // Best-effort: local save has already succeeded either way, so a cloud failure here
+      // (offline, restaurant disabled, etc.) shouldn't block or roll back the local change —
+      // it just means this staff member won't be pairable elsewhere until the next retry.
+      if (currentPin) {
+        try {
+          await pushStaffToCloud({
+            restaurantId,
+            authPin: currentPin,
+            staffId,
+            name,
+            role,
+            pin: pin || undefined,
+          });
+        } catch (err) {
+          Alert.alert(
+            'Saved locally only',
+            `${name} was saved on this device, but couldn't be synced to the cloud yet: ${
+              err instanceof Error ? err.message : 'Unknown error'
+            }\n\nThey can still log in here, but won't be able to pair another device or show up in the admin panel until this succeeds.`,
+          );
+        }
       }
     },
     onSuccess: () => {
@@ -67,8 +91,14 @@ export default function StaffEditorScreen() {
       <Text style={styles.sectionLabel}>Role</Text>
       <View style={styles.chipRow}>
         {ROLES.map((r) => (
-          <Pressable key={r.key} onPress={() => setRole(r.key)} style={[styles.chip, role === r.key && styles.chipActive]}>
-            <Text style={[styles.chipText, role === r.key && styles.chipTextActive]}>{r.label}</Text>
+          <Pressable
+            key={r.key}
+            onPress={() => setRole(r.key)}
+            style={[styles.chip, role === r.key && styles.chipActive]}
+          >
+            <Text style={[styles.chipText, role === r.key && styles.chipTextActive]}>
+              {r.label}
+            </Text>
           </Pressable>
         ))}
       </View>
@@ -106,6 +136,11 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: '#2563eb' },
   chipText: { color: '#333', fontWeight: '600' },
   chipTextActive: { color: 'white' },
-  switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  switchRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   switchLabel: { fontSize: 15, fontWeight: '500' },
 });
