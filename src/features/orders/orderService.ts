@@ -154,6 +154,7 @@ export async function addItemToOrder(orderId: string, input: AddItemInput): Prom
             updatedAt: new Date(),
           })
           .where(eq(orderItems.id, existing.id));
+        await recalculateOrderTotals(orderId);
         return;
       }
     }
