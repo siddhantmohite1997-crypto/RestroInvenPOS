@@ -4,7 +4,12 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
 import { getItem } from '@/features/menu/itemService';
-import { getRecipeIngredients, listInventoryItems, setRecipeIngredients } from '@/features/inventory/inventoryService';
+import {
+  formatQuantity,
+  getRecipeIngredients,
+  listInventoryItems,
+  setRecipeIngredients,
+} from '@/features/inventory/inventoryService';
 import { Button } from '@/components/Button';
 
 export default function RecipeIngredientsScreen() {
@@ -88,7 +93,7 @@ export default function RecipeIngredientsScreen() {
               <View style={[styles.checkbox, isSelected && styles.checkboxChecked]} />
               <Text style={styles.rowName}>{inv.name}</Text>
               <Text style={styles.rowStock}>
-                {inv.quantity} {inv.unit} in stock
+                {formatQuantity(inv.quantity)} {inv.unit} in stock
               </Text>
             </Pressable>
             {isSelected && (

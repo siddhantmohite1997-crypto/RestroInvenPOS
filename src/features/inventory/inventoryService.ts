@@ -6,6 +6,13 @@ import { generateId } from '@/lib/id';
 export type InventoryItem = typeof inventoryItems.$inferSelect;
 export type RecipeIngredient = typeof recipeIngredients.$inferSelect;
 
+/** Display-time defense-in-depth against floating-point artifacts (e.g. 9.400000000000002)
+ * in the quantity — consumeIngredients rounds at write time, but this covers any row written
+ * before that fix, or through any other path (manual edit, sync from an older client). */
+export function formatQuantity(quantity: number): string {
+  return String(Math.round((quantity + Number.EPSILON) * 1000) / 1000);
+}
+
 export async function listInventoryItems(restaurantId: string): Promise<InventoryItem[]> {
   return db.query.inventoryItems.findMany({
     where: (i, { and, eq: eqOp }) => and(eqOp(i.restaurantId, restaurantId), eqOp(i.isActive, true)),
@@ -117,10 +124,13 @@ export async function consumeIngredients(menuItemId: string | null | undefined, 
     where: (r, { eq: eqOp }) => eqOp(r.menuItemId, menuItemId),
   });
   for (const row of rows) {
+    // Rounded to 3dp (matching the NUMERIC(10,3) column in Supabase) at write time, not just
+    // on display — floating-point subtraction alone leaves artifacts like 9.400000000000002
+    // that would otherwise accumulate further with every subsequent order.
     await db
       .update(inventoryItems)
       .set({
-        quantity: sql`${inventoryItems.quantity} - ${row.quantityRequired * quantityDelta}`,
+        quantity: sql`ROUND(${inventoryItems.quantity} - ${row.quantityRequired * quantityDelta}, 3)`,
         updatedAt: new Date(),
       })
       .where(eq(inventoryItems.id, row.inventoryItemId));

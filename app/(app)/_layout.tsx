@@ -25,7 +25,7 @@ export default function AppLayout() {
   const showReports = isOwner;
 
   return (
-    <Tabs screenOptions={{ headerShown: true }}>
+    <Tabs screenOptions={{ headerShown: true }} initialRouteName={isOwner ? 'menu' : 'orders'}>
       <Tabs.Screen
         name="orders"
         options={{

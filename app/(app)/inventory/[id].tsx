@@ -6,6 +6,7 @@ import { useRestaurantId } from '@/features/auth/useRestaurantId';
 import {
   createInventoryItem,
   deleteInventoryItem,
+  formatQuantity,
   getInventoryItem,
   updateInventoryItem,
 } from '@/features/inventory/inventoryService';
@@ -37,7 +38,7 @@ export default function InventoryItemEditorScreen() {
     if (!item) return;
     setName(item.name);
     setUnit(item.unit);
-    setQuantity(String(item.quantity));
+    setQuantity(formatQuantity(item.quantity));
     setLowStockThreshold(item.lowStockThreshold != null ? String(item.lowStockThreshold) : '');
     setCostPerUnit(item.costPerUnit != null ? String(item.costPerUnit) : '');
   }, [itemQuery.data]);
