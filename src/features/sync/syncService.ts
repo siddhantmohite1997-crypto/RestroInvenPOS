@@ -148,7 +148,11 @@ export async function checkRestaurantStatus(
       };
     }
     if (!response.ok) {
-      return { online: true, enabled: false, reason: 'Could not verify restaurant status' };
+      // Includes 404 ("this restaurant doesn't exist in the cloud" -- true for every
+      // locally-created "Start Fresh" restaurant that was never registered) and 5xx errors.
+      // Neither means the restaurant is disabled, so don't block login on it -- treat it the
+      // same as not being able to reach the server at all.
+      return { online: false };
     }
     return { online: true, enabled: true };
   } catch {

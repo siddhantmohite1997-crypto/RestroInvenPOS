@@ -35,7 +35,14 @@ export function useSyncGate() {
 
       if (mode === 'manual') {
         const lastSyncedAt = await getLastSyncedAt(restaurantId);
-        if (!lastSyncedAt || Date.now() - lastSyncedAt.getTime() > TWO_DAYS_MS) {
+        // A restaurant that has never synced isn't necessarily "overdue" -- it may just have
+        // been created moments ago. Only nag once it's actually old enough that 2 days could
+        // plausibly have passed; a brand-new restaurant gets the same grace period as one that
+        // synced right after creation would.
+        const sinceRelevantEvent = lastSyncedAt
+          ? Date.now() - lastSyncedAt.getTime()
+          : Date.now() - restaurant.createdAt.getTime();
+        if (sinceRelevantEvent > TWO_DAYS_MS) {
           Alert.alert(
             'Sync reminder',
             "This restaurant's data hasn't been backed up to the cloud in over 2 days. Go to Settings → Sync to sync now.",

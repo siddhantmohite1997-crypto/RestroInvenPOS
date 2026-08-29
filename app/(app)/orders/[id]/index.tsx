@@ -77,7 +77,11 @@ export default function OrderItemPickerScreen() {
   });
 
   async function onItemPress(item: MenuItem) {
-    if (item.isOutOfStock) return;
+    // Guard against re-entry: without this, rapid repeat taps fire concurrent
+    // addItemToOrder calls with no transaction between them, and their order-total
+    // recalculations race -- the last one to *finish* wins even if it read stale
+    // data, so the bill can end up short of what the tapped items actually total.
+    if (item.isOutOfStock || quickAddMutation.isPending) return;
     const groups = await getModifierGroupsForItem(item.id);
     if (groups.length > 0) {
       router.push(`/orders/${id}/add-item/${item.id}`);
