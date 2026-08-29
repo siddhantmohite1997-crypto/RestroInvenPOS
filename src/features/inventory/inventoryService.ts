@@ -55,9 +55,14 @@ export async function updateInventoryItem(id: string, input: Partial<InventoryIt
     .where(eq(inventoryItems.id, id));
 }
 
-/** Soft delete: recipe_ingredients references inventoryItemId. */
+/** Soft delete. Also drops any recipe_ingredients rows pointing at this item -- unlike other
+ * soft-deletes in this app, leaving them behind wouldn't just show stale data, it would let a
+ * dish keep silently deducting quantity from an item the user can no longer see or manage. */
 export async function deleteInventoryItem(id: string): Promise<void> {
-  await db.update(inventoryItems).set({ isActive: false, updatedAt: new Date() }).where(eq(inventoryItems.id, id));
+  await db.transaction(async (tx) => {
+    await tx.update(inventoryItems).set({ isActive: false, updatedAt: new Date() }).where(eq(inventoryItems.id, id));
+    await tx.delete(recipeIngredients).where(eq(recipeIngredients.inventoryItemId, id));
+  });
 }
 
 export interface RecipeIngredientWithItem extends RecipeIngredient {
