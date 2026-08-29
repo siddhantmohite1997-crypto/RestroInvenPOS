@@ -30,7 +30,11 @@ export default function LoginScreen() {
   }, []);
 
   if (currentUser) {
-    return <Redirect href="/(app)/orders" />;
+    // Owner has no Billing tab (see app/(app)/_layout.tsx) -- redirecting there regardless of
+    // role was the actual cause of Owner briefly landing on Billing's content on login; the
+    // Tabs navigator's own initialRouteName can't override an explicit redirect to a specific
+    // route.
+    return <Redirect href={currentUser.role === 'owner' ? '/(app)/menu' : '/(app)/orders'} />;
   }
 
   async function submitPin(nextPin: string) {
