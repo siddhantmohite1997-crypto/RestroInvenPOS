@@ -12,6 +12,8 @@ import {
   taxComponents,
   comboDeals,
   comboDealItems,
+  inventoryItems,
+  recipeIngredients,
   diningTables,
   orders,
   orderItems,
@@ -282,6 +284,20 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
   syncData.menuItemModifierGroups = menuItemIds.length
     ? await db.query.menuItemModifierGroups.findMany({
         where: inArray(menuItemModifierGroups.menuItemId, menuItemIds),
+      })
+    : [];
+
+  const inventoryItemRows = await db.query.inventoryItems.findMany({
+    where: eq(inventoryItems.restaurantId, restaurantId),
+  });
+  syncData.inventoryItems = filterChangedSince(
+    inventoryItemRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+    lastSyncedAt,
+  );
+
+  syncData.recipeIngredients = menuItemIds.length
+    ? await db.query.recipeIngredients.findMany({
+        where: inArray(recipeIngredients.menuItemId, menuItemIds),
       })
     : [];
 

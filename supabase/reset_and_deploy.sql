@@ -10,6 +10,8 @@ DROP TABLE IF EXISTS order_item_modifiers CASCADE;
 DROP TABLE IF EXISTS order_items CASCADE;
 DROP TABLE IF EXISTS orders CASCADE;
 DROP TABLE IF EXISTS dining_tables CASCADE;
+DROP TABLE IF EXISTS recipe_ingredients CASCADE;
+DROP TABLE IF EXISTS inventory_items CASCADE;
 DROP TABLE IF EXISTS combo_deal_items CASCADE;
 DROP TABLE IF EXISTS combo_deals CASCADE;
 DROP TABLE IF EXISTS menu_item_modifier_groups CASCADE;
@@ -196,6 +198,32 @@ CREATE TABLE combo_deal_items (
 );
 
 -- ============================================================================
+-- INVENTORY (raw stock + recipe -> ingredient links)
+-- ============================================================================
+CREATE TABLE inventory_items (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  unit TEXT NOT NULL,
+  quantity NUMERIC(10, 3) NOT NULL DEFAULT 0,
+  low_stock_threshold NUMERIC(10, 3),
+  cost_per_unit NUMERIC(10, 2),
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE recipe_ingredients (
+  id TEXT PRIMARY KEY,
+  restaurant_id TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+  menu_item_id TEXT NOT NULL REFERENCES menu_items(id) ON DELETE CASCADE,
+  inventory_item_id TEXT NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+  quantity_required NUMERIC(10, 3) NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ============================================================================
 -- DINING TABLES
 -- ============================================================================
 CREATE TABLE dining_tables (
@@ -334,6 +362,8 @@ CREATE INDEX idx_tax_rules_restaurant ON tax_rules(restaurant_id);
 CREATE INDEX idx_tax_components_rule ON tax_components(tax_rule_id);
 CREATE INDEX idx_combo_deals_restaurant ON combo_deals(restaurant_id);
 CREATE INDEX idx_combo_deal_items_combo ON combo_deal_items(combo_deal_id);
+CREATE INDEX idx_inventory_items_restaurant ON inventory_items(restaurant_id);
+CREATE INDEX idx_recipe_ingredients_menu_item ON recipe_ingredients(menu_item_id);
 CREATE INDEX idx_dining_tables_restaurant ON dining_tables(restaurant_id);
 CREATE INDEX idx_orders_restaurant ON orders(restaurant_id);
 CREATE INDEX idx_orders_status ON orders(status);
@@ -357,6 +387,8 @@ ALTER TABLE modifiers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE menu_item_modifier_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE combo_deals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE combo_deal_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inventory_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE recipe_ingredients ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dining_tables ENABLE ROW LEVEL SECURITY;
 ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE order_items ENABLE ROW LEVEL SECURITY;

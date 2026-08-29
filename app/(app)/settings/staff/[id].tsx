@@ -10,9 +10,11 @@ import type { StaffRole } from '@/features/auth/permissions';
 import { FormField } from '@/components/FormField';
 import { Button } from '@/components/Button';
 
+// StaffRole's stored values (owner/admin/cashier) are unchanged — only the labels shown here
+// reflect the Owner/Captain/Waiter model. See the comment on StaffRole in permissions.ts.
 const ROLES: { key: StaffRole; label: string }[] = [
-  { key: 'cashier', label: 'Cashier' },
-  { key: 'admin', label: 'Admin' },
+  { key: 'cashier', label: 'Waiter' },
+  { key: 'admin', label: 'Captain' },
   { key: 'owner', label: 'Owner' },
 ];
 

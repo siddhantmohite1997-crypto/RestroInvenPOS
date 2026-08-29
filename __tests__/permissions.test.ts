@@ -1,6 +1,7 @@
 import {
   canEditPrices,
   canManageStaff,
+  canViewAuditLog,
   canVoidWithoutOverride,
   isLargeDiscount,
   needsDiscountOverride,
@@ -9,18 +10,24 @@ import {
 } from '@/features/auth/permissions';
 
 describe('role capability checks', () => {
-  it('grants owner and admin the same elevated capabilities', () => {
+  it('grants owner and admin (labeled "Captain") the same order-level capabilities', () => {
     for (const role of ['owner', 'admin'] as const) {
       expect(canEditPrices(role)).toBe(true);
-      expect(canManageStaff(role)).toBe(true);
       expect(canVoidWithoutOverride(role)).toBe(true);
     }
   });
 
-  it('denies a cashier the elevated capabilities', () => {
+  it('denies a cashier (labeled "Waiter") the elevated capabilities', () => {
     expect(canEditPrices('cashier')).toBe(false);
     expect(canManageStaff('cashier')).toBe(false);
     expect(canVoidWithoutOverride('cashier')).toBe(false);
+  });
+
+  it('restricts staff management and audit log to owner only, not admin/Captain', () => {
+    expect(canManageStaff('owner')).toBe(true);
+    expect(canManageStaff('admin')).toBe(false);
+    expect(canViewAuditLog('owner')).toBe(true);
+    expect(canViewAuditLog('admin')).toBe(false);
   });
 });
 

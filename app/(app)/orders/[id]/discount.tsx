@@ -86,7 +86,7 @@ export default function DiscountScreen() {
       />
 
       {needsDiscountOverride(currentUser.role, discountInput) && (
-        <Text style={styles.overrideHint}>This discount is large enough to need an owner/admin PIN.</Text>
+        <Text style={styles.overrideHint}>This discount is large enough to need an owner/captain PIN.</Text>
       )}
 
       <Button label="Apply discount" onPress={onApplyPress} disabled={!canApply} />
@@ -95,7 +95,7 @@ export default function DiscountScreen() {
         visible={overrideVisible}
         restaurantId={restaurantId}
         title="Manager approval needed"
-        message="This discount is above the usual cashier limit. Enter an owner/admin PIN to approve it."
+        message="This discount is above the usual waiter limit. Enter an owner/captain PIN to approve it."
         onApprove={(approverId) => {
           setOverrideVisible(false);
           applyMutation.mutate(approverId);

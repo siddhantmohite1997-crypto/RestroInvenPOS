@@ -5,6 +5,9 @@ import { useAuthStore } from '@/store/authStore';
 import { setTablesEnabled } from '@/features/restaurant/restaurantService';
 import { canManageStaff, canViewAuditLog } from '@/features/auth/permissions';
 
+// Stored values are unchanged (owner/admin/cashier) — see the comment on StaffRole in permissions.ts.
+const ROLE_LABEL: Record<string, string> = { owner: 'Owner', admin: 'Captain', cashier: 'Waiter' };
+
 export default function SettingsScreen() {
   const router = useRouter();
   const currentUser = useAuthStore((s) => s.currentUser);
@@ -17,6 +20,9 @@ export default function SettingsScreen() {
     onSuccess: hydrate,
   });
 
+  // canManageStaff/canViewAuditLog are both owner-only under the Owner/Captain/Waiter model,
+  // so this screen naturally collapses to just the header + Log out for Captain and Waiter —
+  // no management links rendered at all, not disabled-and-visible.
   const isManager = currentUser ? canManageStaff(currentUser.role) : false;
   const canSeeAudit = currentUser ? canViewAuditLog(currentUser.role) : false;
 
@@ -25,18 +31,17 @@ export default function SettingsScreen() {
       <Text style={styles.title}>Settings</Text>
       <Text style={styles.row}>Restaurant: {restaurant?.name}</Text>
       <Text style={styles.row}>Signed in as: {currentUser?.name}</Text>
-      <Text style={styles.row}>Role: {currentUser?.role}</Text>
-
-      <View style={styles.switchRow}>
-        <Text style={styles.switchLabel}>Table management</Text>
-        <Switch
-          value={restaurant?.tablesEnabled ?? true}
-          onValueChange={(v) => toggleTablesMutation.mutate(v)}
-        />
-      </View>
+      <Text style={styles.row}>Role: {currentUser ? ROLE_LABEL[currentUser.role] : ''}</Text>
 
       {isManager && (
         <>
+          <View style={styles.switchRow}>
+            <Text style={styles.switchLabel}>Table management</Text>
+            <Switch
+              value={restaurant?.tablesEnabled ?? true}
+              onValueChange={(v) => toggleTablesMutation.mutate(v)}
+            />
+          </View>
           <Pressable style={styles.linkRow} onPress={() => router.push('/settings/business-details')}>
             <Text style={styles.linkText}>Business Details</Text>
           </Pressable>

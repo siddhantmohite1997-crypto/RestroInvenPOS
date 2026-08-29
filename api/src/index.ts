@@ -281,6 +281,8 @@ app.post('/sync', async (req: Request, res: Response) => {
       },
       comboDeals: { table: 'combo_deals', conflictTarget: 'id' },
       comboDealItems: { table: 'combo_deal_items', conflictTarget: 'id' },
+      inventoryItems: { table: 'inventory_items', conflictTarget: 'id' },
+      recipeIngredients: { table: 'recipe_ingredients', conflictTarget: 'id' },
       diningTables: { table: 'dining_tables', conflictTarget: 'id' },
       orders: { table: 'orders', conflictTarget: 'id' },
       orderItems: { table: 'order_items', conflictTarget: 'id' },

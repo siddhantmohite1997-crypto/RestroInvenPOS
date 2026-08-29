@@ -18,6 +18,7 @@ import { apportionDiscount, type DiscountInput } from '@/features/discounts/disc
 import { setTableStatus } from '@/features/tables/tableService';
 import { nextInvoiceNumber } from '@/features/restaurant/restaurantService';
 import { logAudit } from '@/features/audit/auditService';
+import { consumeIngredients, restoreIngredients } from '@/features/inventory/inventoryService';
 
 export type Order = typeof orders.$inferSelect;
 export type OrderItem = typeof orderItems.$inferSelect;
@@ -155,6 +156,7 @@ export async function addItemToOrder(orderId: string, input: AddItemInput): Prom
           })
           .where(eq(orderItems.id, existing.id));
         await recalculateOrderTotals(orderId);
+        await consumeIngredients(existing.menuItemId, input.quantity);
         return;
       }
     }
@@ -235,17 +237,24 @@ export async function addItemToOrder(orderId: string, input: AddItemInput): Prom
   }
 
   await recalculateOrderTotals(orderId);
+  await consumeIngredients(menuItemId, input.quantity);
 }
 
 export async function updateItemQuantity(orderItemId: string, quantity: number): Promise<void> {
   const item = await db.query.orderItems.findFirst({ where: eq(orderItems.id, orderItemId) });
   if (!item) return;
   const lineSubtotal = round2(item.unitPriceSnapshot * quantity);
+  const delta = quantity - item.quantity;
   await db
     .update(orderItems)
     .set({ quantity, lineSubtotal, updatedAt: new Date() })
     .where(eq(orderItems.id, orderItemId));
   await recalculateOrderTotals(item.orderId);
+  if (delta > 0) {
+    await consumeIngredients(item.menuItemId, delta);
+  } else if (delta < 0) {
+    await restoreIngredients(item.menuItemId, -delta);
+  }
 }
 
 /** Pre-payment cart edit — a plain delete, not a formal "void" (that's for edits after a bill is finalized, Phase 6). */
@@ -255,6 +264,7 @@ export async function removeItemFromOrder(orderItemId: string): Promise<void> {
   await db.delete(orderItemModifiers).where(eq(orderItemModifiers.orderItemId, orderItemId));
   await db.delete(orderItems).where(eq(orderItems.id, orderItemId));
   await recalculateOrderTotals(item.orderId);
+  await restoreIngredients(item.menuItemId, item.quantity);
 }
 
 export async function parkOrder(orderId: string): Promise<void> {

@@ -5,7 +5,8 @@ import { useRestaurantId } from '@/features/auth/useRestaurantId';
 import { listStaff } from '@/features/staff/staffService';
 import { Button } from '@/components/Button';
 
-const ROLE_LABEL: Record<string, string> = { owner: 'Owner', admin: 'Admin', cashier: 'Cashier' };
+// Stored values are unchanged (owner/admin/cashier) — see the comment on StaffRole in permissions.ts.
+const ROLE_LABEL: Record<string, string> = { owner: 'Owner', admin: 'Captain', cashier: 'Waiter' };
 
 export default function StaffListScreen() {
   const router = useRouter();

@@ -279,7 +279,7 @@ export default function ReceiptScreen() {
         visible={voidOverrideVisible}
         restaurantId={order.restaurantId}
         title="Manager approval needed"
-        message="Voiding a bill needs an owner/admin PIN to approve."
+        message="Voiding a bill needs an owner/captain PIN to approve."
         onApprove={(approverId) => {
           setVoidOverrideVisible(false);
           voidMutation.mutate(approverId);

@@ -1,3 +1,8 @@
+/** Stored/synced values are unchanged from the original Owner/Admin/Cashier model — only the
+ * UI-facing labels became Owner/Captain/Waiter (see the `ROLES` array in
+ * settings/staff/[id].tsx). Renaming the values themselves would mean migrating every
+ * already-paired device and already-synced cloud `staff` row, for a purely cosmetic change,
+ * so `admin` is labeled "Captain" and `cashier` is labeled "Waiter" everywhere in the UI. */
 export type StaffRole = 'owner' | 'admin' | 'cashier';
 
 /**
@@ -13,12 +18,16 @@ export function canEditPrices(role: StaffRole): boolean {
   return role === 'owner' || role === 'admin';
 }
 
+/** Owner-only: staff management lives inside Settings, which is Owner-exclusive content-wise
+ * under the Owner/Captain/Waiter model (Captain and Waiter see a stripped-down Settings with
+ * just Log out — see app/(app)/settings/index.tsx). */
 export function canManageStaff(role: StaffRole): boolean {
-  return role === 'owner' || role === 'admin';
+  return role === 'owner';
 }
 
+/** Owner-only — same reasoning as canManageStaff. */
 export function canViewAuditLog(role: StaffRole): boolean {
-  return role === 'owner' || role === 'admin';
+  return role === 'owner';
 }
 
 export function canVoidWithoutOverride(role: StaffRole): boolean {

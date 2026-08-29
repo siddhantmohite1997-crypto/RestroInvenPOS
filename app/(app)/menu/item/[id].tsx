@@ -256,7 +256,7 @@ export default function ItemEditorScreen() {
       )}
 
       {priceChanged && needsPriceEditOverride(currentUser.role) && (
-        <Text style={styles.overrideHint}>Changing the price needs an owner/admin PIN.</Text>
+        <Text style={styles.overrideHint}>Changing the price needs an owner/captain PIN.</Text>
       )}
 
       <Button
@@ -273,7 +273,7 @@ export default function ItemEditorScreen() {
         visible={priceOverrideVisible}
         restaurantId={restaurantId}
         title="Manager approval needed"
-        message="Only an owner or admin can change prices. Enter their PIN to approve this change."
+        message="Only an owner or captain can change prices. Enter their PIN to approve this change."
         onApprove={(approverId) => {
           setPriceOverrideVisible(false);
           saveMutation.mutate(approverId);

@@ -13,6 +13,17 @@ export default function AppLayout() {
     return <Redirect href="/(auth)/login" />;
   }
 
+  // Owner/Captain/Waiter tab visibility. `admin` is labeled "Captain" and `cashier` is
+  // labeled "Waiter" throughout the UI — see the comment on StaffRole in permissions.ts.
+  // Owner is back-office focused (no Billing/Tables); Waiter is floor-focused (no
+  // Inventory/Recipes/Reports). Settings itself stays visible to everyone — its content is
+  // what's stripped down per role, since Captain/Waiter still need a way to log out.
+  const isOwner = currentUser.role === 'owner';
+  const isWaiter = currentUser.role === 'cashier';
+  const showBillingAndTables = !isOwner;
+  const showInventoryAndRecipes = !isWaiter;
+  const showReports = isOwner;
+
   return (
     <Tabs screenOptions={{ headerShown: true }}>
       <Tabs.Screen
@@ -20,6 +31,7 @@ export default function AppLayout() {
         options={{
           title: 'Billing',
           headerShown: false,
+          href: showBillingAndTables ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="receipt-outline" size={size} color={color} />,
         }}
       />
@@ -28,7 +40,7 @@ export default function AppLayout() {
         options={{
           title: 'Tables',
           headerShown: false,
-          href: tablesEnabled ? undefined : null,
+          href: showBillingAndTables && tablesEnabled ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="grid-outline" size={size} color={color} />,
         }}
       />
@@ -41,10 +53,29 @@ export default function AppLayout() {
         }}
       />
       <Tabs.Screen
+        name="inventory"
+        options={{
+          title: 'Inventory',
+          headerShown: false,
+          href: showInventoryAndRecipes ? undefined : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="cube-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="recipes"
+        options={{
+          title: 'Recipes',
+          headerShown: false,
+          href: showInventoryAndRecipes ? undefined : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="book-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="reports"
         options={{
           title: 'Reports',
           headerShown: false,
+          href: showReports ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="bar-chart-outline" size={size} color={color} />,
         }}
       />
