@@ -8,6 +8,8 @@ import m0003 from './0003_flowery_tiger_shark.sql';
 import m0004 from './0004_giant_goblin_queen.sql';
 import m0005 from './0005_normal_sway.sql';
 import m0006 from './0006_chemical_joystick.sql';
+import m0007 from './0007_youthful_the_stranger.sql';
+import m0008 from './0008_round_madame_masque.sql';
 
   export default {
     journal,
@@ -18,7 +20,9 @@ m0002,
 m0003,
 m0004,
 m0005,
-m0006
+m0006,
+m0007,
+m0008
     }
   }
   

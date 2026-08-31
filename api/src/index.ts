@@ -94,6 +94,41 @@ async function verifyPinAuth(
 }
 
 // ============================================================================
+// TABLE MAP (shared by /sync's push and /restore's pull)
+// ============================================================================
+
+// Object key order below is also FK-safe upsert order, and it matters: each table must come
+// after every table it has a foreign key into (e.g. menuItems references taxRules, so taxRules
+// must be upserted first) or the insert fails on a missing FK target. This is NOT the same
+// order syncService.ts happens to collect the data in on the client — that order only reflects
+// independent SELECT queries and has no FK constraints to respect. /restore's client-side
+// insert must walk this same order (parents before children) for the same reason.
+const TABLE_MAP: Record<string, { table: string; conflictTarget: string }> = {
+  restaurants: { table: 'restaurants', conflictTarget: 'id' },
+  categories: { table: 'categories', conflictTarget: 'id' },
+  taxRules: { table: 'tax_rules', conflictTarget: 'id' },
+  taxComponents: { table: 'tax_components', conflictTarget: 'id' },
+  menuItems: { table: 'menu_items', conflictTarget: 'id' },
+  modifierGroups: { table: 'modifier_groups', conflictTarget: 'id' },
+  modifiers: { table: 'modifiers', conflictTarget: 'id' },
+  menuItemModifierGroups: {
+    table: 'menu_item_modifier_groups',
+    conflictTarget: 'menu_item_id,modifier_group_id',
+  },
+  comboDeals: { table: 'combo_deals', conflictTarget: 'id' },
+  comboDealItems: { table: 'combo_deal_items', conflictTarget: 'id' },
+  inventoryItems: { table: 'inventory_items', conflictTarget: 'id' },
+  recipeIngredients: { table: 'recipe_ingredients', conflictTarget: 'id' },
+  diningTables: { table: 'dining_tables', conflictTarget: 'id' },
+  orders: { table: 'orders', conflictTarget: 'id' },
+  orderItems: { table: 'order_items', conflictTarget: 'id' },
+  orderItemModifiers: { table: 'order_item_modifiers', conflictTarget: 'id' },
+  discounts: { table: 'discounts', conflictTarget: 'id' },
+  payments: { table: 'payments', conflictTarget: 'id' },
+  auditLogs: { table: 'audit_logs', conflictTarget: 'id' },
+};
+
+// ============================================================================
 // PAIR ENDPOINT
 // ============================================================================
 
@@ -145,6 +180,90 @@ app.post('/pair', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('Pair error:', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Pairing failed' });
+  }
+});
+
+// ============================================================================
+// RESTORE ENDPOINT
+// ============================================================================
+
+const RESTORE_PAGE_SIZE = 1000;
+
+/** PostgREST caps a single response at 1000 rows by default — page through with .range()
+ * so a restaurant with more than 1000 orders (or any other table) doesn't silently lose data. */
+async function fetchAllRows(
+  pgTable: string,
+  restaurantId: string,
+): Promise<Record<string, unknown>[]> {
+  const rows: Record<string, unknown>[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from(pgTable)
+      .select('*')
+      .eq('restaurant_id', restaurantId)
+      .range(from, from + RESTORE_PAGE_SIZE - 1);
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if (!data || data.length < RESTORE_PAGE_SIZE) break;
+    from += RESTORE_PAGE_SIZE;
+  }
+  return rows;
+}
+
+/**
+ * Called right after /pair (or standalone, re-authenticated the same way) to pull every row
+ * this restaurant has in the cloud back down onto a device that just attached to it — a brand
+ * new phone, or the SAME phone after an uninstall/reinstall wiped its local SQLite. Without
+ * this, pairing only ever seeded the restaurant's own business-details row and the ONE staff
+ * record whose PIN was typed in; every menu item, inventory item, recipe link, other staff
+ * member, tax rule, and order history the restaurant had built up was invisible on the new
+ * device even though it was sitting in Supabase the whole time.
+ *
+ * Auth is the same restaurantId+PIN check as /pair — any staff member's own PIN can trigger a
+ * restore, matching how pairing itself already works regardless of role.
+ *
+ * Staff PINs are never sent in restorable form to a device other than their own: the `staff`
+ * array returned here carries `pin_hash`, which is the cloud's unsalted SHA-256(pin) (see
+ * verifyPinAuth above) — not reversible to the plaintext PIN, and not usable as-is for local
+ * login (the device's own scheme is a per-device-salted hash). The client stores it as a
+ * one-time bridge so that staff member's real first login on this device can verify against it
+ * and upgrade to a proper local salted hash — see tryCloudPinFallback in authService.ts.
+ */
+app.post('/restore', async (req: Request, res: Response) => {
+  try {
+    const { restaurantId, pin } = req.body as { restaurantId?: string; pin?: string };
+
+    if (!restaurantId || !pin) {
+      return res.status(400).json({ error: 'restaurantId and pin required' });
+    }
+
+    const auth = await verifyPinAuth(restaurantId, pin);
+    if (!auth.valid) {
+      return res.status(401).json({ error: auth.reason || 'Authentication failed' });
+    }
+
+    // No is_active column on the cloud staff table -- it has no soft-delete concept, unlike
+    // the local users table. Every restored staff row is treated as active.
+    const { data: staff, error: staffError } = await supabase
+      .from('staff')
+      .select('id, name, role, pin_hash')
+      .eq('restaurant_id', restaurantId);
+    if (staffError) {
+      console.error(`/restore: staff lookup failed for ${restaurantId}:`, staffError);
+      throw staffError;
+    }
+
+    const data: Record<string, Record<string, unknown>[]> = {};
+    for (const [jsKey, { table: pgTable }] of Object.entries(TABLE_MAP)) {
+      if (jsKey === 'restaurants') continue; // fetched separately below, keyed by id not restaurant_id
+      data[jsKey] = await fetchAllRows(pgTable, restaurantId);
+    }
+
+    res.json({ staff: staff ?? [], data });
+  } catch (err) {
+    console.error('Restore error:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Restore failed' });
   }
 });
 
@@ -260,37 +379,8 @@ app.post('/sync', async (req: Request, res: Response) => {
     // convert every row's own keys the same way (customerEmail -> customer_email, etc.),
     // since PostgREST matches JSON keys to column names literally with no case folding.
     // menuItemModifierGroups has no `id` column locally (composite key on menuItemId+modifierGroupId),
-    // so it needs its own onConflict target instead of the default 'id'.
-    //
-    // Object key order below is also the upsert order, and it matters: each table must come
-    // after every table it has a foreign key into (e.g. menuItems references taxRules, so
-    // taxRules must be upserted first) or the insert fails on a missing FK target. This is NOT
-    // the same order syncService.ts happens to collect the data in on the client — that order
-    // only reflects independent SELECT queries and has no FK constraints to respect.
-    const TABLE_MAP: Record<string, { table: string; conflictTarget: string }> = {
-      restaurants: { table: 'restaurants', conflictTarget: 'id' },
-      categories: { table: 'categories', conflictTarget: 'id' },
-      taxRules: { table: 'tax_rules', conflictTarget: 'id' },
-      taxComponents: { table: 'tax_components', conflictTarget: 'id' },
-      menuItems: { table: 'menu_items', conflictTarget: 'id' },
-      modifierGroups: { table: 'modifier_groups', conflictTarget: 'id' },
-      modifiers: { table: 'modifiers', conflictTarget: 'id' },
-      menuItemModifierGroups: {
-        table: 'menu_item_modifier_groups',
-        conflictTarget: 'menu_item_id,modifier_group_id',
-      },
-      comboDeals: { table: 'combo_deals', conflictTarget: 'id' },
-      comboDealItems: { table: 'combo_deal_items', conflictTarget: 'id' },
-      inventoryItems: { table: 'inventory_items', conflictTarget: 'id' },
-      recipeIngredients: { table: 'recipe_ingredients', conflictTarget: 'id' },
-      diningTables: { table: 'dining_tables', conflictTarget: 'id' },
-      orders: { table: 'orders', conflictTarget: 'id' },
-      orderItems: { table: 'order_items', conflictTarget: 'id' },
-      orderItemModifiers: { table: 'order_item_modifiers', conflictTarget: 'id' },
-      discounts: { table: 'discounts', conflictTarget: 'id' },
-      payments: { table: 'payments', conflictTarget: 'id' },
-      auditLogs: { table: 'audit_logs', conflictTarget: 'id' },
-    };
+    // so it needs its own onConflict target instead of the default 'id'. See the shared
+    // TABLE_MAP above for the FK-safe key order this loop relies on.
 
     const toSnakeCase = (key: string) =>
       key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);

@@ -219,6 +219,7 @@ CREATE TABLE recipe_ingredients (
   menu_item_id TEXT NOT NULL REFERENCES menu_items(id) ON DELETE CASCADE,
   inventory_item_id TEXT NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
   quantity_required NUMERIC(10, 3) NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

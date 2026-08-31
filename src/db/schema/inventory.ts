@@ -36,6 +36,7 @@ export const recipeIngredients = sqliteTable('recipe_ingredients', {
     .notNull()
     .references(() => inventoryItems.id),
   quantityRequired: real('quantity_required').notNull(),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
     .notNull()
     .$defaultFn(() => new Date()),

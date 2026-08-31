@@ -52,6 +52,12 @@ export const users = sqliteTable('users', {
   name: text('name').notNull(),
   pinHash: text('pin_hash').notNull(),
   pinSalt: text('pin_salt').notNull(),
+  /** Set only for a staff row restored from the cloud (not the device's own paired login) --
+   * the cloud only ever has an unsalted SHA-256 of the PIN (see /pair, /staff in api/src/index.ts),
+   * so this device can't compute a real salted pinHash for that staff member until they actually
+   * log in once. authenticateByPin() falls back to this, then upgrades to a proper salted
+   * pinHash/pinSalt and clears this column. */
+  cloudPinHash: text('cloud_pin_hash'),
   role: text('role').$type<'owner' | 'admin' | 'cashier'>().notNull().default('cashier'),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
