@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useMutation } from '@tanstack/react-query';
-import { pairWithRestaurant } from '@/features/setup/setupService';
+import { pairWithRestaurant, restoreFromCloud } from '@/features/setup/setupService';
 import { useAuthStore } from '@/store/authStore';
 import { FormField } from '@/components/FormField';
 import { Button } from '@/components/Button';
@@ -12,15 +12,39 @@ export default function PairScreen() {
   const hydrate = useAuthStore((s) => s.hydrate);
   const [restaurantId, setRestaurantId] = useState('');
   const [pin, setPin] = useState('');
+  const [isRestoring, setIsRestoring] = useState(false);
 
   const pairMutation = useMutation({
-    mutationFn: () => pairWithRestaurant({ restaurantId: restaurantId.trim(), pin: pin.trim() }),
+    mutationFn: async () => {
+      const trimmedId = restaurantId.trim();
+      const trimmedPin = pin.trim();
+      const { staffId } = await pairWithRestaurant({ restaurantId: trimmedId, pin: trimmedPin });
+      setIsRestoring(true);
+      try {
+        // Failing to restore shouldn't strand the user on this screen -- they're already
+        // validly paired at this point (the local restaurant + their own login both exist).
+        // Surface it, but let them into the app; they can retry from a future re-pair if this
+        // was a transient network blip.
+        await restoreFromCloud(trimmedId, trimmedPin, staffId);
+      } catch (restoreError) {
+        Alert.alert(
+          "Couldn't restore existing data",
+          restoreError instanceof Error
+            ? restoreError.message
+            : "Pairing succeeded, but this restaurant's existing menu/inventory/staff data couldn't be pulled down. You can keep using the app — try re-pairing later to fetch it.",
+        );
+      } finally {
+        setIsRestoring(false);
+      }
+    },
     onSuccess: async () => {
       await hydrate();
       router.replace('/(auth)/login');
     },
     onError: (e) => Alert.alert('Pairing failed', e instanceof Error ? e.message : String(e)),
   });
+
+  const isBusy = pairMutation.isPending || isRestoring;
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -47,12 +71,12 @@ export default function PairScreen() {
       />
 
       <Button
-        label={pairMutation.isPending ? 'Pairing…' : 'Pair Device'}
+        label={isRestoring ? 'Restoring your data…' : pairMutation.isPending ? 'Pairing…' : 'Pair Device'}
         onPress={() => pairMutation.mutate()}
-        disabled={pairMutation.isPending || !restaurantId.trim() || !pin.trim()}
+        disabled={isBusy || !restaurantId.trim() || !pin.trim()}
         style={styles.button}
       />
-      <Button label="Back" variant="secondary" onPress={() => router.back()} />
+      <Button label="Back" variant="secondary" onPress={() => router.back()} disabled={isBusy} />
     </ScrollView>
   );
 }
