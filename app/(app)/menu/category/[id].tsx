@@ -53,7 +53,7 @@ export default function CategoryEditorScreen() {
   });
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
       <FormField label="Category name" value={name} onChangeText={setName} placeholder="e.g. Starters" />
       <Button label={isNew ? 'Create category' : 'Save changes'} onPress={() => saveMutation.mutate()} disabled={!name.trim()} />
       {!isNew && (

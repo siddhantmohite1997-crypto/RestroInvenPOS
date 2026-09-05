@@ -47,7 +47,7 @@ export default function PairScreen() {
   const isBusy = pairMutation.isPending || isRestoring;
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
       <Text style={styles.title}>Pair with your restaurant</Text>
       <Text style={styles.subtitle}>
         Ask whoever registered your restaurant for its ID, or find it in the admin panel.

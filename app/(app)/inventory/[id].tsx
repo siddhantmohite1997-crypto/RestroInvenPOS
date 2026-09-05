@@ -11,6 +11,7 @@ import {
   updateInventoryItem,
 } from '@/features/inventory/inventoryService';
 import { FormField } from '@/components/FormField';
+import { UnitPicker } from '@/components/UnitPicker';
 import { Button } from '@/components/Button';
 
 export default function InventoryItemEditorScreen() {
@@ -82,9 +83,9 @@ export default function InventoryItemEditorScreen() {
   const canSave = name.trim().length > 0 && unit.trim().length > 0;
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
       <FormField label="Item name" value={name} onChangeText={setName} placeholder="e.g. Paneer" />
-      <FormField label="Unit" value={unit} onChangeText={setUnit} placeholder="e.g. kg, l, pcs" />
+      <UnitPicker label="Unit" value={unit} onChange={setUnit} />
       <FormField label="Quantity in stock" value={quantity} onChangeText={setQuantity} keyboardType="decimal-pad" placeholder="0" />
       <FormField
         label="Low stock threshold (optional)"

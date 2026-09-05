@@ -87,7 +87,7 @@ export default function StaffEditorScreen() {
   const canSave = name.trim().length > 0 && (isNew ? /^\d{4,6}$/.test(pin) : true);
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
       <FormField label="Name" value={name} onChangeText={setName} placeholder="Staff name" />
 
       <Text style={styles.sectionLabel}>Role</Text>

@@ -162,7 +162,7 @@ export default function ReceiptScreen() {
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView contentContainerStyle={styles.scroll} keyboardDismissMode="on-drag">
         <View style={styles.receiptCard}>
           <Text style={styles.businessName}>{receiptInput.business.name}</Text>
           {receiptInput.business.addressLine1 && (

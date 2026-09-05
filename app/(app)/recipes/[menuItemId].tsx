@@ -77,7 +77,7 @@ export default function RecipeIngredientsScreen() {
   const inventoryItems = inventoryQuery.data ?? [];
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
       <Text style={styles.itemName}>{itemQuery.data?.name}</Text>
       <Text style={styles.hint}>Select which inventory items this dish uses, and how much of each per serving.</Text>
 

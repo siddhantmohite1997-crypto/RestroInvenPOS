@@ -84,7 +84,7 @@ export default function BusinessDetailsScreen() {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
       <FormField label="Restaurant name" value={form.name} onChangeText={(v) => set('name', v)} />
       <FormField label="Legal name (optional)" value={form.legalName} onChangeText={(v) => set('legalName', v)} />
       <FormField label="Address line 1" value={form.addressLine1} onChangeText={(v) => set('addressLine1', v)} />

@@ -164,7 +164,7 @@ export default function ItemEditorScreen() {
   const canSave = name.trim().length > 0 && !!categoryId && parseFloat(price) >= 0;
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
       <Pressable onPress={pickImage} style={styles.imagePicker}>
         {imageUri ? (
           <Image source={{ uri: imageUri }} style={styles.image} />

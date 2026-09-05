@@ -111,32 +111,25 @@ export default function OrderItemPickerScreen() {
         placeholderTextColor="#999"
       />
 
-      <FlatList
-        horizontal
-        data={categoriesQuery.data ?? []}
-        keyExtractor={(c) => c.id}
-        style={styles.categoryList}
-        contentContainerStyle={{ gap: 8, paddingHorizontal: 12 }}
-        showsHorizontalScrollIndicator={false}
-        ListFooterComponent={
+      <View style={styles.categoryWrap}>
+        {(categoriesQuery.data ?? []).map((c) => (
           <Pressable
-            onPress={() => setSelectedCategoryId(COMBOS_CATEGORY_ID)}
-            style={[styles.categoryChip, showingCombos && styles.categoryChipActive]}
+            key={c.id}
+            onPress={() => setSelectedCategoryId(c.id)}
+            style={[styles.categoryChip, activeCategoryId === c.id && styles.categoryChipActive]}
           >
-            <Text style={[styles.categoryChipText, showingCombos && styles.categoryChipTextActive]}>Combos</Text>
-          </Pressable>
-        }
-        renderItem={({ item }) => (
-          <Pressable
-            onPress={() => setSelectedCategoryId(item.id)}
-            style={[styles.categoryChip, activeCategoryId === item.id && styles.categoryChipActive]}
-          >
-            <Text style={[styles.categoryChipText, activeCategoryId === item.id && styles.categoryChipTextActive]}>
-              {item.name}
+            <Text style={[styles.categoryChipText, activeCategoryId === c.id && styles.categoryChipTextActive]}>
+              {c.name}
             </Text>
           </Pressable>
-        )}
-      />
+        ))}
+        <Pressable
+          onPress={() => setSelectedCategoryId(COMBOS_CATEGORY_ID)}
+          style={[styles.categoryChip, showingCombos && styles.categoryChipActive]}
+        >
+          <Text style={[styles.categoryChipText, showingCombos && styles.categoryChipTextActive]}>Combos</Text>
+        </Pressable>
+      </View>
 
       {showingCombos ? (
         <FlatList
@@ -199,7 +192,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     fontSize: 15,
   },
-  categoryList: { flexGrow: 0, marginVertical: 8 },
+  categoryWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, marginVertical: 8 },
   categoryChip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: '#eee' },
   categoryChipActive: { backgroundColor: '#2563eb' },
   categoryChipText: { color: '#333', fontWeight: '600' },
