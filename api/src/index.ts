@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
+import { getSubscriptionStatus, parseDateOnly } from './subscriptionDates';
 
 dotenv.config();
 
@@ -347,7 +348,7 @@ app.post('/sync', async (req: Request, res: Response) => {
     if (checkOnly) {
       const { data: restaurant, error: restaurantError } = await supabase
         .from('restaurants')
-        .select('enabled')
+        .select('enabled, subscription_plan, next_due_date')
         .eq('id', restaurantId)
         .single();
 
@@ -362,7 +363,19 @@ app.post('/sync', async (req: Request, res: Response) => {
       if (!restaurant.enabled) {
         return res.status(401).json({ error: 'Restaurant is currently disabled' });
       }
-      return res.json({ success: true, enabled: true, checkOnly: true });
+
+      // Reported to the app so it can show a payment-reminder popup after login (Owner/Captain
+      // only, decided client-side) -- never null when a reminder is warranted, since a plan
+      // without a subscription_plan set is intentionally excluded (tier would be meaningless).
+      let subscriptionReminder: { tier: string; message: string; nextDueDate: string } | null = null;
+      if (restaurant.subscription_plan && restaurant.next_due_date) {
+        const status = getSubscriptionStatus(parseDateOnly(restaurant.next_due_date), new Date());
+        if (status.tier !== 'ok') {
+          subscriptionReminder = { tier: status.tier, message: status.message, nextDueDate: restaurant.next_due_date };
+        }
+      }
+
+      return res.json({ success: true, enabled: true, checkOnly: true, subscriptionReminder });
     }
 
     // Verify PIN and restaurant

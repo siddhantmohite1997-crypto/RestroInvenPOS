@@ -105,12 +105,21 @@ export async function pushStaffToCloud(input: PushStaffInput): Promise<void> {
   }
 }
 
+export interface SubscriptionReminder {
+  tier: string;
+  message: string;
+  nextDueDate: string;
+}
+
 export interface RestaurantStatus {
   /** false if the request couldn't even reach the server (offline, DNS, timeout, etc). */
   online: boolean;
   /** Only meaningful when online is true. */
   enabled?: boolean;
   reason?: string;
+  /** Present whenever the server has a payment reminder to show -- absent (not just null) when
+   * offline, no plan is set, or the account is fully caught up. */
+  subscriptionReminder?: SubscriptionReminder | null;
 }
 
 /**
@@ -156,7 +165,8 @@ export async function checkRestaurantStatus(
       // same as not being able to reach the server at all.
       return { online: false };
     }
-    return { online: true, enabled: true };
+    const body = await response.json().catch(() => ({}));
+    return { online: true, enabled: true, subscriptionReminder: body.subscriptionReminder ?? null };
   } catch {
     return { online: false };
   }
