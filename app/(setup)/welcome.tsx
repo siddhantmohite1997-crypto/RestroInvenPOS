@@ -19,7 +19,7 @@ export default function WelcomeScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Welcome to POS</Text>
+      <Text style={styles.title}>Welcome to RestroInven</Text>
       <Text style={styles.subtitle}>Set up this device to get started</Text>
 
       <View style={styles.card}>
