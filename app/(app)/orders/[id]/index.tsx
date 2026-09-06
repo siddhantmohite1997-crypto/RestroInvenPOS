@@ -46,6 +46,26 @@ export default function OrderItemPickerScreen() {
     refetchInterval: 2000,
   });
 
+  // How many of each item/combo are already on this order, so a tapped card can show "Added:
+  // N" right away instead of staff having to open the bill to check whether a tap registered.
+  const qtyByMenuItemId = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const line of orderQuery.data?.items ?? []) {
+      if (!line.menuItemId) continue;
+      map.set(line.menuItemId, (map.get(line.menuItemId) ?? 0) + line.quantity);
+    }
+    return map;
+  }, [orderQuery.data]);
+
+  const qtyByComboDealId = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const line of orderQuery.data?.items ?? []) {
+      if (!line.comboDealId) continue;
+      map.set(line.comboDealId, (map.get(line.comboDealId) ?? 0) + line.quantity);
+    }
+    return map;
+  }, [orderQuery.data]);
+
   const visibleItems = useMemo(() => {
     const items = itemsQuery.data ?? [];
     if (!search.trim()) return items;
@@ -139,13 +159,17 @@ export default function OrderItemPickerScreen() {
           contentContainerStyle={styles.itemGrid}
           columnWrapperStyle={{ gap: 10 }}
           ListEmptyComponent={<Text style={styles.emptyText}>No combos available.</Text>}
-          renderItem={({ item }) => (
-            <Pressable style={styles.itemCard} onPress={() => onComboPress(item)}>
-              <Text style={styles.itemName}>{item.name}</Text>
-              <Text style={styles.itemPrice}>₹{item.price.toFixed(2)}</Text>
-              <Text style={styles.comboBadge}>Combo</Text>
-            </Pressable>
-          )}
+          renderItem={({ item }) => {
+            const qty = qtyByComboDealId.get(item.id) ?? 0;
+            return (
+              <Pressable style={styles.itemCard} onPress={() => onComboPress(item)}>
+                <Text style={styles.itemName}>{item.name}</Text>
+                <Text style={styles.itemPrice}>₹{item.price.toFixed(2)}</Text>
+                <Text style={styles.comboBadge}>Combo</Text>
+                {qty > 0 && <Text style={styles.addedBadge}>Added: {qty}</Text>}
+              </Pressable>
+            );
+          }}
         />
       ) : (
         <FlatList
@@ -154,18 +178,22 @@ export default function OrderItemPickerScreen() {
           numColumns={2}
           contentContainerStyle={styles.itemGrid}
           columnWrapperStyle={{ gap: 10 }}
-          renderItem={({ item }) => (
-            <Pressable
-              style={[styles.itemCard, item.isOutOfStock && styles.itemCardDisabled]}
-              onPress={() => onItemPress(item)}
-              disabled={item.isOutOfStock}
-            >
-              <Text style={styles.itemName}>{item.name}</Text>
-              <Text style={styles.itemPrice}>
-                {item.isOutOfStock ? 'Out of stock' : `₹${item.price.toFixed(2)}`}
-              </Text>
-            </Pressable>
-          )}
+          renderItem={({ item }) => {
+            const qty = qtyByMenuItemId.get(item.id) ?? 0;
+            return (
+              <Pressable
+                style={[styles.itemCard, item.isOutOfStock && styles.itemCardDisabled]}
+                onPress={() => onItemPress(item)}
+                disabled={item.isOutOfStock}
+              >
+                <Text style={styles.itemName}>{item.name}</Text>
+                <Text style={styles.itemPrice}>
+                  {item.isOutOfStock ? 'Out of stock' : `₹${item.price.toFixed(2)}`}
+                </Text>
+                {qty > 0 && <Text style={styles.addedBadge}>Added: {qty}</Text>}
+              </Pressable>
+            );
+          }}
         />
       )}
 
@@ -211,6 +239,7 @@ const styles = StyleSheet.create({
   itemCardDisabled: { opacity: 0.4 },
   itemName: { fontSize: 15, fontWeight: '600' },
   itemPrice: { fontSize: 13, color: '#666', marginTop: 4 },
+  addedBadge: { fontSize: 11, color: '#2563eb', fontWeight: '700', marginTop: 4 },
   cartBar: {
     position: 'absolute',
     bottom: 0,

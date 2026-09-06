@@ -13,6 +13,17 @@ export function formatQuantity(quantity: number): string {
   return String(Math.round((quantity + Number.EPSILON) * 1000) / 1000);
 }
 
+/** Nobody thinks of a per-serving recipe amount as "0.150 kg" or "0.030 l" -- they think "150 g"
+ * or "30 ml". Recipe entry converts to/from this finer unit for kg/l stock items; anything else
+ * (pcs, box, packet, ...) has no natural finer subunit, so it's entered directly, factor 1. The
+ * inventory item's own stock quantity is never touched by this -- it stays in its stored unit. */
+export function getRecipeInputUnit(stockUnit: string): { label: string; factor: number } {
+  const u = stockUnit.trim().toLowerCase();
+  if (u === 'kg') return { label: 'g', factor: 1000 };
+  if (u === 'l' || u === 'ltr' || u === 'litre' || u === 'liter') return { label: 'ml', factor: 1000 };
+  return { label: stockUnit, factor: 1 };
+}
+
 export async function listInventoryItems(restaurantId: string): Promise<InventoryItem[]> {
   return db.query.inventoryItems.findMany({
     where: (i, { and, eq: eqOp }) => and(eqOp(i.restaurantId, restaurantId), eqOp(i.isActive, true)),
@@ -28,6 +39,7 @@ export async function getInventoryItem(id: string): Promise<InventoryItem | null
 export interface InventoryItemInput {
   restaurantId: string;
   name: string;
+  category?: string;
   unit: string;
   quantity: number;
   lowStockThreshold?: number;
@@ -40,6 +52,7 @@ export async function createInventoryItem(input: InventoryItemInput): Promise<st
     id,
     restaurantId: input.restaurantId,
     name: input.name,
+    category: input.category,
     unit: input.unit,
     quantity: input.quantity,
     lowStockThreshold: input.lowStockThreshold,
