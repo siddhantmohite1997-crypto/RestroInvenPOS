@@ -51,23 +51,6 @@ export function dueDateForCycle(startDate: Date, plan: SubscriptionPlan, cycleNu
   return addMonthsClamped(startDate, PLAN_MONTHS[plan] * cycleNumber);
 }
 
-/** Finds the first cycle (>=1) whose due date is on or after `today`. Used the first time a
- * plan is set (or changed) on a restaurant, however far in the past its start date is -- a
- * restaurant that registered two years ago and is only just having its plan configured now
- * lands on its current real cycle, not cycle 1. Bounded to a sane number of iterations (a
- * 100-year-old start date on the shortest plan is ~400 cycles) so a bad input can't spin. */
-export function computeCurrentCycle(startDate: Date, plan: SubscriptionPlan, today: Date): SubscriptionCycle {
-  let cycleNumber = 1;
-  let dueDate = dueDateForCycle(startDate, plan, cycleNumber);
-  let guard = 0;
-  while (dueDate < today && guard < 5000) {
-    cycleNumber += 1;
-    dueDate = dueDateForCycle(startDate, plan, cycleNumber);
-    guard += 1;
-  }
-  return { cycleNumber, dueDate };
-}
-
 /** The next cycle after the one that was just paid. Always recomputed from the fixed
  * `startDate` at `(currentCycleNumber + 1) * planMonths` -- NEVER by adding another plan period
  * on top of the previous due date. Chaining off the previous due date would let one clamped

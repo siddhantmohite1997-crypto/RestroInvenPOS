@@ -1,7 +1,6 @@
 import {
   addMonthsClamped,
   advanceCycle,
-  computeCurrentCycle,
   dueDateForCycle,
   formatDateOnly,
   getSubscriptionStatus,
@@ -66,35 +65,6 @@ describe('dueDateForCycle and the three plan lengths', () => {
     expect(formatDateOnly(dueDateForCycle(anchor31, 'quarterly', 2))).toBe('2026-07-31'); // back to 31
     expect(formatDateOnly(dueDateForCycle(anchor31, 'quarterly', 3))).toBe('2026-10-31');
     expect(formatDateOnly(dueDateForCycle(anchor31, 'quarterly', 4))).toBe('2027-01-31');
-  });
-});
-
-describe('computeCurrentCycle', () => {
-  it('lands on cycle 1 when the start date is in the future relative to today', () => {
-    const start = parseDateOnly('2026-09-06');
-    const today = parseDateOnly('2026-08-01');
-    const { cycleNumber, dueDate } = computeCurrentCycle(start, 'quarterly', today);
-    expect(cycleNumber).toBe(1);
-    expect(formatDateOnly(dueDate)).toBe('2026-12-06');
-  });
-
-  it('fast-forwards through several elapsed cycles for a long-registered restaurant', () => {
-    // Registered 2024-01-06, quarterly (3-month cycles): 2024-04-06, 07-06, 10-06,
-    // 2025-01-06, 04-06, 07-06, 10-06, 2026-01-06, 04-06 (this one is still in the future
-    // relative to "today" below) -- so today should land on cycle 9.
-    const start = parseDateOnly('2024-01-06');
-    const today = parseDateOnly('2026-02-01');
-    const { cycleNumber, dueDate } = computeCurrentCycle(start, 'quarterly', today);
-    expect(cycleNumber).toBe(9);
-    expect(formatDateOnly(dueDate)).toBe('2026-04-06');
-  });
-
-  it('lands exactly on today when today IS a due date', () => {
-    const start = parseDateOnly('2026-01-06');
-    const today = parseDateOnly('2026-04-06');
-    const { cycleNumber, dueDate } = computeCurrentCycle(start, 'quarterly', today);
-    expect(cycleNumber).toBe(1);
-    expect(formatDateOnly(dueDate)).toBe('2026-04-06');
   });
 });
 
