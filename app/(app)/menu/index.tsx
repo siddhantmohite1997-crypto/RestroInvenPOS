@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { FlatList, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
@@ -39,7 +39,7 @@ export default function MenuScreen() {
         <Button label="Scan Menu" variant="secondary" onPress={() => router.push('/menu/scan')} />
       </View>
 
-      <View style={styles.categoryWrap}>
+      <ScrollView style={styles.categoryScroll} contentContainerStyle={styles.categoryWrap}>
         {(categoriesQuery.data ?? []).map((c) => (
           <Pressable
             key={c.id}
@@ -55,7 +55,7 @@ export default function MenuScreen() {
         <Pressable style={styles.categoryChipAdd} onPress={() => router.push('/menu/category/new')}>
           <Text style={styles.categoryChipAddText}>+ Category</Text>
         </Pressable>
-      </View>
+      </ScrollView>
 
       <FlatList
         data={itemsQuery.data ?? []}
@@ -97,12 +97,16 @@ export default function MenuScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   topActions: { flexDirection: 'row', gap: 8, padding: 12, flexWrap: 'wrap' },
+  // Bounded height + its own scroll: a restaurant with a lot of categories (20+) would
+  // otherwise push the actual item list -- the thing staff are here to see -- off the bottom
+  // of the screen entirely. Capped to roughly 3 chip rows; scrolling this area reaches the
+  // rest without ever truncating a chip mid-word the way the old horizontal-scroll row did.
+  categoryScroll: { flexGrow: 0, maxHeight: 132, marginBottom: 8 },
   categoryWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
     paddingHorizontal: 12,
-    marginBottom: 8,
   },
   categoryChip: {
     paddingHorizontal: 16,

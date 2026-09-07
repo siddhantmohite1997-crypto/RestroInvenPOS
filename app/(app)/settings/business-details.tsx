@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Switch, Text, View, Pressable } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { updateBusinessDetails, type BusinessDetailsInput } from '@/features/restaurant/restaurantService';
@@ -14,6 +15,7 @@ const ROUNDING_OPTIONS: { key: BusinessDetailsInput['roundingRule']; label: stri
 ];
 
 export default function BusinessDetailsScreen() {
+  const router = useRouter();
   const restaurant = useAuthStore((s) => s.restaurant);
   const hydrate = useAuthStore((s) => s.hydrate);
   const queryClient = useQueryClient();
@@ -72,7 +74,7 @@ export default function BusinessDetailsScreen() {
     onSuccess: () => {
       hydrate();
       queryClient.invalidateQueries();
-      Alert.alert('Saved', 'Business details updated.');
+      Alert.alert('Saved', 'Business details updated.', [{ text: 'OK', onPress: () => router.back() }]);
     },
     onError: (err) => {
       Alert.alert('Save failed', err instanceof Error ? err.message : 'Could not save business details.');

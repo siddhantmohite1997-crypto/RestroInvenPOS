@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
@@ -131,7 +131,7 @@ export default function OrderItemPickerScreen() {
         placeholderTextColor="#999"
       />
 
-      <View style={styles.categoryWrap}>
+      <ScrollView style={styles.categoryScroll} contentContainerStyle={styles.categoryWrap}>
         {(categoriesQuery.data ?? []).map((c) => (
           <Pressable
             key={c.id}
@@ -149,7 +149,7 @@ export default function OrderItemPickerScreen() {
         >
           <Text style={[styles.categoryChipText, showingCombos && styles.categoryChipTextActive]}>Combos</Text>
         </Pressable>
-      </View>
+      </ScrollView>
 
       {showingCombos ? (
         <FlatList
@@ -220,7 +220,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     fontSize: 15,
   },
-  categoryWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, marginVertical: 8 },
+  // Bounded height + its own scroll -- see the Menu screen's identical fix for why: a
+  // restaurant with a lot of categories would otherwise push the item grid off the bottom.
+  categoryScroll: { flexGrow: 0, maxHeight: 132, marginVertical: 8 },
+  categoryWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12 },
   categoryChip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: '#eee' },
   categoryChipActive: { backgroundColor: '#2563eb' },
   categoryChipText: { color: '#333', fontWeight: '600' },
