@@ -11,6 +11,7 @@ import { addItemToOrder, getOrder, parkOrder } from '@/features/orders/orderServ
 import { Button } from '@/components/Button';
 
 const COMBOS_CATEGORY_ID = '__combos__';
+const ALL_CATEGORY_ID = '__all__';
 
 export default function OrderItemPickerScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -30,7 +31,8 @@ export default function OrderItemPickerScreen() {
 
   const itemsQuery = useQuery({
     queryKey: ['items', restaurantId, activeCategoryId],
-    queryFn: () => listItems(restaurantId, activeCategoryId ?? undefined),
+    queryFn: () =>
+      listItems(restaurantId, activeCategoryId === ALL_CATEGORY_ID ? undefined : (activeCategoryId ?? undefined)),
     enabled: !!activeCategoryId && !showingCombos,
   });
 
@@ -132,6 +134,14 @@ export default function OrderItemPickerScreen() {
       />
 
       <ScrollView style={styles.categoryScroll} contentContainerStyle={styles.categoryWrap}>
+        <Pressable
+          onPress={() => setSelectedCategoryId(ALL_CATEGORY_ID)}
+          style={[styles.categoryChip, activeCategoryId === ALL_CATEGORY_ID && styles.categoryChipActive]}
+        >
+          <Text style={[styles.categoryChipText, activeCategoryId === ALL_CATEGORY_ID && styles.categoryChipTextActive]}>
+            All
+          </Text>
+        </Pressable>
         {(categoriesQuery.data ?? []).map((c) => (
           <Pressable
             key={c.id}

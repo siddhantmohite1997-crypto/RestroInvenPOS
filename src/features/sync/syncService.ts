@@ -67,12 +67,28 @@ async function callSupabaseSync(
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(`Sync failed: ${error.error || response.statusText}`);
+    throw new Error(`Sync failed: ${await readErrorMessage(response)}`);
   }
 
   const result = (await response.json()) as { pushedCounts: Record<string, number> };
   return result;
+}
+
+/**
+ * The server always tries to answer with JSON, but a few failure modes never reach our own
+ * error handler (a proxy/host-level 502, a body-size limit rejected before this build's fix
+ * shipped, etc.) and come back as an HTML or plain-text page instead. Blindly calling
+ * response.json() on those throws a "Unexpected character: <" parse error that hides the
+ * actual problem, so fall back to the response's status line when the body isn't JSON.
+ */
+async function readErrorMessage(response: Response): Promise<string> {
+  const text = await response.text().catch(() => '');
+  try {
+    const parsed = JSON.parse(text);
+    return parsed.error || response.statusText || `HTTP ${response.status}`;
+  } catch {
+    return response.statusText || `HTTP ${response.status}`;
+  }
 }
 
 export interface PushStaffInput {
@@ -100,8 +116,7 @@ export async function pushStaffToCloud(input: PushStaffInput): Promise<void> {
     body: JSON.stringify(input),
   });
   if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.error || 'Could not sync staff member to the cloud.');
+    throw new Error(await readErrorMessage(response));
   }
 }
 

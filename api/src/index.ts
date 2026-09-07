@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
@@ -12,7 +12,10 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+// A full sync payload scales with the restaurant's menu size (e.g. 276 items + modifiers +
+// inventory for a real client) and can comfortably exceed Express's 100kb default, so this
+// needs real headroom rather than the default.
+app.use(express.json({ limit: '20mb' }));
 
 // Supabase client
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -302,6 +305,25 @@ app.post('/staff', async (req: Request, res: Response) => {
       return res.status(401).json({ error: auth.reason || 'Authentication failed' });
     }
 
+    // pin_hash is NOT NULL in the staff table. Omitting `pin` on an edit is normally fine --
+    // it means "keep the current hash" -- but only if a cloud row already exists to keep it
+    // from. If this staff member's first push never made it (offline at creation time, etc.),
+    // there's no existing row and no pin_hash to fall back to, so the upsert below would
+    // insert with a null pin_hash and crash on the NOT NULL constraint. Check first so that
+    // case surfaces as an actionable message instead of a raw Postgres error.
+    if (!pin) {
+      const { data: existingStaff } = await supabase
+        .from('staff')
+        .select('id')
+        .eq('id', staffId)
+        .maybeSingle();
+      if (!existingStaff) {
+        return res.status(400).json({
+          error: `${name} hasn't been synced to the cloud before -- enter their PIN once to finish setting them up.`,
+        });
+      }
+    }
+
     const upsertRow: Record<string, unknown> = {
       id: staffId,
       restaurant_id: restaurantId,
@@ -572,6 +594,22 @@ app.get('/health', (req: Request, res: Response) => {
 // ============================================================================
 // START SERVER
 // ============================================================================
+
+// Body-parser errors (oversized or malformed JSON) throw before any route handler runs, and
+// Express's default error handler renders them as an HTML page. The mobile client always
+// expects JSON back, so an HTML error page there surfaces as a confusing
+// "JSON Parse error: Unexpected character: <" instead of the actual problem -- catch it here
+// and always answer with JSON.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((err: Error & { status?: number; type?: string }, req: Request, res: Response, next: NextFunction) => {
+  const status = err.status ?? 500;
+  const message =
+    err.type === 'entity.too.large'
+      ? 'Sync payload too large for the server to accept. Contact support.'
+      : err.message || 'Unexpected server error';
+  console.error('Unhandled request error:', err);
+  res.status(status).json({ error: message });
+});
 
 app.listen(PORT, () => {
   console.log(`POS API running on port ${PORT}`);
