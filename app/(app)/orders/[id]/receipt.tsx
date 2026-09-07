@@ -90,7 +90,11 @@ export default function ReceiptScreen() {
 
   const printMutation = useMutation({
     mutationFn: async () => {
-      const result = await printReceiptHtml(buildReceiptHtml(receiptInput!));
+      const result = await printReceiptHtml(
+        buildReceiptHtml(receiptInput!),
+        RECEIPT_PDF_WIDTH_PX,
+        estimateReceiptPdfHeightPx(receiptInput!),
+      );
       if (!result.success) {
         throw new Error(result.message || 'Print failed. Bill saved locally.');
       }
