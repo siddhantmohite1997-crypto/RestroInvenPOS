@@ -365,20 +365,26 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
   const orderRows = await db.query.orders.findMany({
     where: eq(orders.restaurantId, restaurantId),
   });
-  syncData.orders = filterChangedSince(
+  // Every order mutation (a new item, a quantity change, a discount, a payment, a void) runs
+  // through recalculateOrderTotals or its own update, both of which always bump the parent
+  // order's updatedAt -- so an order absent from this changed-since-lastSync set cannot have any
+  // new/changed items, modifiers, discounts, or payments either. Scoping the queries below to
+  // *changed* orders only (not every order this restaurant has ever placed) is what keeps a full
+  // sync payload from growing forever as order history piles up -- resending the entire history
+  // on every sync was the real cause of ever-growing "Pending changes" counts and payload-size
+  // failures, not anything about the connection itself.
+  const changedOrderRows = filterChangedSince(
     orderRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
     lastSyncedAt,
   );
+  syncData.orders = changedOrderRows;
 
-  const orderIds = orderRows.map((o) => o.id);
+  const orderIds = changedOrderRows.map((o) => o.id);
   if (orderIds.length) {
     const orderItemRows = await db.query.orderItems.findMany({
       where: inArray(orderItems.orderId, orderIds),
     });
-    syncData.orderItems = filterChangedSince(
-      orderItemRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
-      lastSyncedAt,
-    );
+    syncData.orderItems = orderItemRows;
 
     const orderItemIds = orderItemRows.map((i) => i.id);
     syncData.orderItemModifiers = orderItemIds.length
@@ -393,6 +399,11 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
     syncData.payments = await db.query.payments.findMany({
       where: inArray(payments.orderId, orderIds),
     });
+  } else {
+    syncData.orderItems = [];
+    syncData.orderItemModifiers = [];
+    syncData.discounts = [];
+    syncData.payments = [];
   }
 
   const auditRows = await db.query.auditLogs.findMany({
