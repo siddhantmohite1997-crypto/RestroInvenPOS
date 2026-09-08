@@ -215,7 +215,10 @@ export async function getPendingChangeCount(restaurantId: string): Promise<numbe
   );
 }
 
-const SYNC_TIMEOUT_MS = 20000;
+// A first-ever sync for a real menu (hundreds of rows) now batches into a handful of requests
+// server-side rather than one per row, but that's still several sequential round-trips over
+// whatever connection the device has -- 20s cut it too close even in the common case.
+const SYNC_TIMEOUT_MS = 45000;
 
 /**
  * The Supabase API might be slow or unreachable. Race the whole operation

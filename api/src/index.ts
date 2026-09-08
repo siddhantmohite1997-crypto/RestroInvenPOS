@@ -427,11 +427,18 @@ app.post('/sync', async (req: Request, res: Response) => {
       return result;
     };
 
+    // Batched, not one upsert call per row: a real restaurant's first sync easily carries
+    // several hundred rows (menu items, modifier links, etc.), and awaiting a separate
+    // network round-trip to Supabase for each one serialized into tens of seconds of pure
+    // latency -- the actual cause of "Sync timed out", not payload size or connection quality.
+    const SYNC_BATCH_SIZE = 500;
+
     for (const [jsKey, { table: pgTable, conflictTarget }] of Object.entries(TABLE_MAP)) {
       const rows = (syncData[jsKey] as Record<string, unknown>[]) || [];
       pushedCounts[jsKey] = 0;
+      if (rows.length === 0) continue;
 
-      for (const row of rows) {
+      const snakeRows = rows.map((row) => {
         // Remove changedAt (local diffing field, not a real column)
         const { changedAt: _changedAt, ...cleanRow } = row;
         const snakeRow = rowToSnakeCase(cleanRow);
@@ -440,11 +447,12 @@ app.post('/sync', async (req: Request, res: Response) => {
         // IS the restaurant record and has no such column (it doesn't reference itself).
         // Every other synced table gets it uniformly, including junction tables that don't
         // have it locally, for RLS/isolation defense-in-depth.
-        const rowWithRestaurant =
-          jsKey === 'restaurants' ? snakeRow : { ...snakeRow, restaurant_id: restaurantId };
+        return jsKey === 'restaurants' ? snakeRow : { ...snakeRow, restaurant_id: restaurantId };
+      });
 
-        // Upsert (insert or update)
-        const { error } = await supabase.from(pgTable).upsert(rowWithRestaurant, {
+      for (let i = 0; i < snakeRows.length; i += SYNC_BATCH_SIZE) {
+        const chunk = snakeRows.slice(i, i + SYNC_BATCH_SIZE);
+        const { error } = await supabase.from(pgTable).upsert(chunk, {
           onConflict: conflictTarget,
         });
 
@@ -452,9 +460,9 @@ app.post('/sync', async (req: Request, res: Response) => {
           console.error(`Error upserting ${pgTable}:`, error);
           throw error;
         }
-
-        pushedCounts[jsKey]++;
       }
+
+      pushedCounts[jsKey] = rows.length;
     }
 
     // Update last_synced_at
