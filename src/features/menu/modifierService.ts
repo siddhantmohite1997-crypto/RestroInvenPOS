@@ -117,11 +117,11 @@ export async function createModifier(input: ModifierInput): Promise<string> {
 }
 
 export async function updateModifier(id: string, input: Partial<Omit<ModifierInput, 'modifierGroupId'>>): Promise<void> {
-  await db.update(modifiers).set(input).where(eq(modifiers.id, id));
+  await db.update(modifiers).set({ ...input, updatedAt: new Date() }).where(eq(modifiers.id, id));
 }
 
 export async function deleteModifier(id: string): Promise<void> {
-  await db.update(modifiers).set({ isActive: false }).where(eq(modifiers.id, id));
+  await db.update(modifiers).set({ isActive: false, updatedAt: new Date() }).where(eq(modifiers.id, id));
 }
 
 export async function attachModifierGroupToItem(

@@ -301,19 +301,34 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
     lastSyncedAt,
   );
 
+  // These four are child rows of an already-filtered parent (a modifier group, a menu item, a
+  // tax rule, a combo deal) but each now carries its own createdAt/updatedAt, so they get
+  // diffed the same way as everything else instead of being resent in full on every sync
+  // regardless of whether anything in them actually changed -- see migration 0010 for why that
+  // used to be the single biggest contributor to "why is sync pushing so much for so little."
   const modifierGroupIds = modifierGroupRows.map((g) => g.id);
-  syncData.modifiers = modifierGroupIds.length
+  const modifierRows = modifierGroupIds.length
     ? await db.query.modifiers.findMany({
         where: inArray(modifiers.modifierGroupId, modifierGroupIds),
       })
     : [];
+  syncData.modifiers = filterChangedSince(
+    modifierRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+    lastSyncedAt,
+  );
 
   const menuItemIds = menuItemRows.map((i) => i.id);
-  syncData.menuItemModifierGroups = menuItemIds.length
+  const menuItemModifierGroupRows = menuItemIds.length
     ? await db.query.menuItemModifierGroups.findMany({
         where: inArray(menuItemModifierGroups.menuItemId, menuItemIds),
       })
     : [];
+  // No `id` column (composite PK on menuItemId+modifierGroupId), so this can't go through
+  // filterChangedSince's TimestampedRow-typed helper -- filter directly on createdAt instead.
+  syncData.menuItemModifierGroups =
+    lastSyncedAt === null
+      ? menuItemModifierGroupRows
+      : menuItemModifierGroupRows.filter((r) => r.createdAt.getTime() > lastSyncedAt.getTime());
 
   const inventoryItemRows = await db.query.inventoryItems.findMany({
     where: eq(inventoryItems.restaurantId, restaurantId),
@@ -323,11 +338,15 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
     lastSyncedAt,
   );
 
-  syncData.recipeIngredients = menuItemIds.length
+  const recipeIngredientRows = menuItemIds.length
     ? await db.query.recipeIngredients.findMany({
         where: inArray(recipeIngredients.menuItemId, menuItemIds),
       })
     : [];
+  syncData.recipeIngredients = filterChangedSince(
+    recipeIngredientRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+    lastSyncedAt,
+  );
 
   const taxRuleRows = await db.query.taxRules.findMany({
     where: eq(taxRules.restaurantId, restaurantId),
@@ -338,9 +357,13 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
   );
 
   const taxRuleIds = taxRuleRows.map((r) => r.id);
-  syncData.taxComponents = taxRuleIds.length
+  const taxComponentRows = taxRuleIds.length
     ? await db.query.taxComponents.findMany({ where: inArray(taxComponents.taxRuleId, taxRuleIds) })
     : [];
+  syncData.taxComponents = filterChangedSince(
+    taxComponentRows.map((r) => ({ ...r, changedAt: r.createdAt })),
+    lastSyncedAt,
+  );
 
   const comboRows = await db.query.comboDeals.findMany({
     where: eq(comboDeals.restaurantId, restaurantId),
@@ -351,11 +374,15 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
   );
 
   const comboIds = comboRows.map((c) => c.id);
-  syncData.comboDealItems = comboIds.length
+  const comboDealItemRows = comboIds.length
     ? await db.query.comboDealItems.findMany({
         where: inArray(comboDealItems.comboDealId, comboIds),
       })
     : [];
+  syncData.comboDealItems = filterChangedSince(
+    comboDealItemRows.map((r) => ({ ...r, changedAt: r.createdAt })),
+    lastSyncedAt,
+  );
 
   const tableRows = await db.query.diningTables.findMany({
     where: eq(diningTables.restaurantId, restaurantId),

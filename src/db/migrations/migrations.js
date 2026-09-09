@@ -11,6 +11,7 @@ import m0006 from './0006_chemical_joystick.sql';
 import m0007 from './0007_youthful_the_stranger.sql';
 import m0008 from './0008_round_madame_masque.sql';
 import m0009 from './0009_round_drax.sql';
+import m0010 from './0010_marvelous_banshee.sql';
 
   export default {
     journal,
@@ -24,7 +25,8 @@ m0005,
 m0006,
 m0007,
 m0008,
-m0009
+m0009,
+m0010
     }
   }
   

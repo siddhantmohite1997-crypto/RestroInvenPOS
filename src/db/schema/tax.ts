@@ -32,4 +32,7 @@ export const taxComponents = sqliteTable('tax_components', {
   label: text('label').notNull(),
   ratePercent: real('rate_percent').notNull(),
   sortOrder: integer('sort_order').notNull().default(0),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .$defaultFn(() => new Date()),
 });
