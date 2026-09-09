@@ -13,6 +13,7 @@ import {
   attachModifierGroupToItem,
   detachModifierGroupFromItem,
   getModifierGroupsForItem,
+  getModifierGroupUsageCounts,
   listModifierGroups,
 } from '@/features/menu/modifierService';
 import { listTaxRules } from '@/features/tax/taxService';
@@ -62,6 +63,23 @@ export default function ItemEditorScreen() {
     enabled: !isNew,
   });
   const attachedGroupIds = new Set((itemModifierGroupsQuery.data ?? []).map((g) => g.id));
+
+  const allGroupIds = (allModifierGroupsQuery.data ?? []).map((g) => g.id);
+  const usageCountsQuery = useQuery({
+    queryKey: ['modifierGroupUsage', restaurantId, allGroupIds.join(',')],
+    queryFn: () => getModifierGroupUsageCounts(allGroupIds),
+    enabled: !isNew && allGroupIds.length > 0,
+  });
+  // A group attached to exactly one OTHER item is that item's own private group (e.g. a
+  // per-dish "Portion" group holding just its Half/Full price delta) rather than something
+  // meant to be reused -- offering it here would mean every item's editor listing every other
+  // item's private group, which is exactly what made this picker unusable for a restaurant with
+  // one such group per menu item. Groups already attached to this item, unused groups, and
+  // groups shared by 2+ items are all still genuinely relevant to show.
+  const pickableGroups = (allModifierGroupsQuery.data ?? []).filter((g) => {
+    if (attachedGroupIds.has(g.id)) return true;
+    return (usageCountsQuery.data?.get(g.id) ?? 0) !== 1;
+  });
 
   /* eslint-disable react-hooks/set-state-in-effect -- hydrate the edit form once the record loads */
   useEffect(() => {
@@ -236,7 +254,7 @@ export default function ItemEditorScreen() {
         <>
           <Text style={styles.sectionLabel}>Modifier groups</Text>
           <View style={styles.chipRow}>
-            {(allModifierGroupsQuery.data ?? []).map((g) => {
+            {pickableGroups.map((g) => {
               const attached = attachedGroupIds.has(g.id);
               return (
                 <Pressable
@@ -248,7 +266,7 @@ export default function ItemEditorScreen() {
                 </Pressable>
               );
             })}
-            {(allModifierGroupsQuery.data ?? []).length === 0 && (
+            {pickableGroups.length === 0 && (
               <Text style={styles.empty}>No modifier groups yet. Create one from Menu → Modifiers.</Text>
             )}
           </View>
