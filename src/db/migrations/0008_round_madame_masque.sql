@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `cloud_pin_hash` text;

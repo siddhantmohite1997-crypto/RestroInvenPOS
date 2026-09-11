@@ -1,10 +1,12 @@
-import { useCallback } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo } from 'react';
+import { Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
-import { formatQuantity, listInventoryItems } from '@/features/inventory/inventoryService';
+import { formatQuantity, listInventoryItems, type InventoryItem } from '@/features/inventory/inventoryService';
 import { Button } from '@/components/Button';
+
+const UNCATEGORIZED = 'Other';
 
 export default function InventoryScreen() {
   const router = useRouter();
@@ -26,13 +28,31 @@ export default function InventoryScreen() {
     }, [queryClient, restaurantId]),
   );
 
+  // Grouped by category so a long stock list (chicken, goat, pork, paneer, bread, ...) reads as
+  // sections (Meat, Dairy, Bakery/Bread, ...) instead of one flat alphabetical wall of names.
+  // Uncategorized items -- anything created before this existed, or left blank -- fall under a
+  // trailing "Other" section rather than being scattered alphabetically among named ones.
+  const sections = useMemo(() => {
+    const byCategory = new Map<string, InventoryItem[]>();
+    for (const item of itemsQuery.data ?? []) {
+      const key = item.category?.trim() || UNCATEGORIZED;
+      if (!byCategory.has(key)) byCategory.set(key, []);
+      byCategory.get(key)!.push(item);
+    }
+    const named = [...byCategory.keys()].filter((k) => k !== UNCATEGORIZED).sort((a, b) => a.localeCompare(b));
+    const ordered = byCategory.has(UNCATEGORIZED) ? [...named, UNCATEGORIZED] : named;
+    return ordered.map((title) => ({ title, data: byCategory.get(title)! }));
+  }, [itemsQuery.data]);
+
   return (
     <View style={styles.container}>
-      <FlatList
-        data={itemsQuery.data ?? []}
+      <SectionList
+        sections={sections}
         keyExtractor={(i) => i.id}
         contentContainerStyle={styles.itemList}
+        stickySectionHeadersEnabled={false}
         ListEmptyComponent={<Text style={styles.empty}>No inventory items yet.</Text>}
+        renderSectionHeader={({ section }) => <Text style={styles.sectionHeader}>{section.title}</Text>}
         renderItem={({ item }) => {
           const isLowStock = item.lowStockThreshold != null && item.quantity <= item.lowStockThreshold;
           return (
@@ -61,6 +81,15 @@ export default function InventoryScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   itemList: { padding: 12, paddingBottom: 90, gap: 8 },
+  sectionHeader: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#666',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginTop: 8,
+    marginBottom: 2,
+  },
   itemRow: {
     flexDirection: 'row',
     alignItems: 'center',

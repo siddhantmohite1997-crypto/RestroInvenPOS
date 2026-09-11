@@ -27,6 +27,7 @@ export default function SyncScreen() {
   const [isOnline, setIsOnline] = useState(true);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [pickingTime, setPickingTime] = useState(false);
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => setIsOnline(state.isConnected ?? true));
@@ -81,7 +82,10 @@ export default function SyncScreen() {
 
   const timeMutation = useMutation({
     mutationFn: (time: string) => setAutoSyncTime(restaurantId, time),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['autoSyncTime', restaurantId] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['autoSyncTime', restaurantId] });
+      setPickingTime(false);
+    },
   });
 
   const pendingCount = pendingCountQuery.data ?? 0;
@@ -136,17 +140,24 @@ export default function SyncScreen() {
           <Text style={styles.hint}>
             Syncs automatically once a day, the first time you open the app after this time.
           </Text>
-          <View style={styles.timeGrid}>
-            {TIME_OPTIONS.map((t) => (
-              <Pressable
-                key={t}
-                style={[styles.timeChip, autoSyncTime === t && styles.timeChipActive]}
-                onPress={() => timeMutation.mutate(t)}
-              >
-                <Text style={[styles.timeChipText, autoSyncTime === t && styles.timeChipTextActive]}>{t}</Text>
-              </Pressable>
-            ))}
-          </View>
+          {pickingTime ? (
+            <View style={styles.timeGrid}>
+              {TIME_OPTIONS.map((t) => (
+                <Pressable
+                  key={t}
+                  style={[styles.timeChip, autoSyncTime === t && styles.timeChipActive]}
+                  onPress={() => timeMutation.mutate(t)}
+                >
+                  <Text style={[styles.timeChipText, autoSyncTime === t && styles.timeChipTextActive]}>{t}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <Pressable style={styles.timeSummaryRow} onPress={() => setPickingTime(true)}>
+              <Text style={styles.timeSummaryText}>Auto-sync time: {autoSyncTime}</Text>
+              <Text style={styles.timeSummaryAction}>Change</Text>
+            </Pressable>
+          )}
         </>
       )}
 
@@ -196,6 +207,18 @@ const styles = StyleSheet.create({
   modeChipText: { color: '#333', fontWeight: '600' },
   modeChipTextActive: { color: 'white' },
   timeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+  timeSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+  timeSummaryText: { fontSize: 14, fontWeight: '600', color: '#333' },
+  timeSummaryAction: { fontSize: 14, fontWeight: '700', color: '#2563eb' },
   timeChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#eee' },
   timeChipActive: { backgroundColor: '#2563eb' },
   timeChipText: { color: '#333', fontSize: 13, fontWeight: '600' },

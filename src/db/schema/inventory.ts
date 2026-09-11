@@ -11,6 +11,10 @@ export const inventoryItems = sqliteTable('inventory_items', {
     .notNull()
     .references(() => restaurants.id),
   name: text('name').notNull(),
+  /** Freeform grouping label ("Meat", "Dairy", "Bakery/Bread", ...) so a long stock list can be
+   * browsed by section instead of one flat alphabetical list. Nullable -- items created before
+   * this existed, or never categorized, just fall under "Other" in the UI. */
+  category: text('category'),
   unit: text('unit').notNull(),
   quantity: real('quantity').notNull().default(0),
   lowStockThreshold: real('low_stock_threshold'),
@@ -36,6 +40,7 @@ export const recipeIngredients = sqliteTable('recipe_ingredients', {
     .notNull()
     .references(() => inventoryItems.id),
   quantityRequired: real('quantity_required').notNull(),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
     .notNull()
     .$defaultFn(() => new Date()),

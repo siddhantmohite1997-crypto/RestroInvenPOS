@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
@@ -11,6 +11,7 @@ import { addItemToOrder, getOrder, parkOrder } from '@/features/orders/orderServ
 import { Button } from '@/components/Button';
 
 const COMBOS_CATEGORY_ID = '__combos__';
+const ALL_CATEGORY_ID = '__all__';
 
 export default function OrderItemPickerScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -30,7 +31,8 @@ export default function OrderItemPickerScreen() {
 
   const itemsQuery = useQuery({
     queryKey: ['items', restaurantId, activeCategoryId],
-    queryFn: () => listItems(restaurantId, activeCategoryId ?? undefined),
+    queryFn: () =>
+      listItems(restaurantId, activeCategoryId === ALL_CATEGORY_ID ? undefined : (activeCategoryId ?? undefined)),
     enabled: !!activeCategoryId && !showingCombos,
   });
 
@@ -45,6 +47,26 @@ export default function OrderItemPickerScreen() {
     queryFn: () => getOrder(id),
     refetchInterval: 2000,
   });
+
+  // How many of each item/combo are already on this order, so a tapped card can show "Added:
+  // N" right away instead of staff having to open the bill to check whether a tap registered.
+  const qtyByMenuItemId = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const line of orderQuery.data?.items ?? []) {
+      if (!line.menuItemId) continue;
+      map.set(line.menuItemId, (map.get(line.menuItemId) ?? 0) + line.quantity);
+    }
+    return map;
+  }, [orderQuery.data]);
+
+  const qtyByComboDealId = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const line of orderQuery.data?.items ?? []) {
+      if (!line.comboDealId) continue;
+      map.set(line.comboDealId, (map.get(line.comboDealId) ?? 0) + line.quantity);
+    }
+    return map;
+  }, [orderQuery.data]);
 
   const visibleItems = useMemo(() => {
     const items = itemsQuery.data ?? [];
@@ -111,32 +133,33 @@ export default function OrderItemPickerScreen() {
         placeholderTextColor="#999"
       />
 
-      <FlatList
-        horizontal
-        data={categoriesQuery.data ?? []}
-        keyExtractor={(c) => c.id}
-        style={styles.categoryList}
-        contentContainerStyle={{ gap: 8, paddingHorizontal: 12 }}
-        showsHorizontalScrollIndicator={false}
-        ListFooterComponent={
+      <ScrollView style={styles.categoryScroll} contentContainerStyle={styles.categoryWrap}>
+        <Pressable
+          onPress={() => setSelectedCategoryId(ALL_CATEGORY_ID)}
+          style={[styles.categoryChip, activeCategoryId === ALL_CATEGORY_ID && styles.categoryChipActive]}
+        >
+          <Text style={[styles.categoryChipText, activeCategoryId === ALL_CATEGORY_ID && styles.categoryChipTextActive]}>
+            All
+          </Text>
+        </Pressable>
+        {(categoriesQuery.data ?? []).map((c) => (
           <Pressable
-            onPress={() => setSelectedCategoryId(COMBOS_CATEGORY_ID)}
-            style={[styles.categoryChip, showingCombos && styles.categoryChipActive]}
+            key={c.id}
+            onPress={() => setSelectedCategoryId(c.id)}
+            style={[styles.categoryChip, activeCategoryId === c.id && styles.categoryChipActive]}
           >
-            <Text style={[styles.categoryChipText, showingCombos && styles.categoryChipTextActive]}>Combos</Text>
-          </Pressable>
-        }
-        renderItem={({ item }) => (
-          <Pressable
-            onPress={() => setSelectedCategoryId(item.id)}
-            style={[styles.categoryChip, activeCategoryId === item.id && styles.categoryChipActive]}
-          >
-            <Text style={[styles.categoryChipText, activeCategoryId === item.id && styles.categoryChipTextActive]}>
-              {item.name}
+            <Text style={[styles.categoryChipText, activeCategoryId === c.id && styles.categoryChipTextActive]}>
+              {c.name}
             </Text>
           </Pressable>
-        )}
-      />
+        ))}
+        <Pressable
+          onPress={() => setSelectedCategoryId(COMBOS_CATEGORY_ID)}
+          style={[styles.categoryChip, showingCombos && styles.categoryChipActive]}
+        >
+          <Text style={[styles.categoryChipText, showingCombos && styles.categoryChipTextActive]}>Combos</Text>
+        </Pressable>
+      </ScrollView>
 
       {showingCombos ? (
         <FlatList
@@ -146,13 +169,17 @@ export default function OrderItemPickerScreen() {
           contentContainerStyle={styles.itemGrid}
           columnWrapperStyle={{ gap: 10 }}
           ListEmptyComponent={<Text style={styles.emptyText}>No combos available.</Text>}
-          renderItem={({ item }) => (
-            <Pressable style={styles.itemCard} onPress={() => onComboPress(item)}>
-              <Text style={styles.itemName}>{item.name}</Text>
-              <Text style={styles.itemPrice}>₹{item.price.toFixed(2)}</Text>
-              <Text style={styles.comboBadge}>Combo</Text>
-            </Pressable>
-          )}
+          renderItem={({ item }) => {
+            const qty = qtyByComboDealId.get(item.id) ?? 0;
+            return (
+              <Pressable style={styles.itemCard} onPress={() => onComboPress(item)}>
+                <Text style={styles.itemName}>{item.name}</Text>
+                <Text style={styles.itemPrice}>₹{item.price.toFixed(2)}</Text>
+                <Text style={styles.comboBadge}>Combo</Text>
+                {qty > 0 && <Text style={styles.addedBadge}>Added: {qty}</Text>}
+              </Pressable>
+            );
+          }}
         />
       ) : (
         <FlatList
@@ -161,18 +188,22 @@ export default function OrderItemPickerScreen() {
           numColumns={2}
           contentContainerStyle={styles.itemGrid}
           columnWrapperStyle={{ gap: 10 }}
-          renderItem={({ item }) => (
-            <Pressable
-              style={[styles.itemCard, item.isOutOfStock && styles.itemCardDisabled]}
-              onPress={() => onItemPress(item)}
-              disabled={item.isOutOfStock}
-            >
-              <Text style={styles.itemName}>{item.name}</Text>
-              <Text style={styles.itemPrice}>
-                {item.isOutOfStock ? 'Out of stock' : `₹${item.price.toFixed(2)}`}
-              </Text>
-            </Pressable>
-          )}
+          renderItem={({ item }) => {
+            const qty = qtyByMenuItemId.get(item.id) ?? 0;
+            return (
+              <Pressable
+                style={[styles.itemCard, item.isOutOfStock && styles.itemCardDisabled]}
+                onPress={() => onItemPress(item)}
+                disabled={item.isOutOfStock}
+              >
+                <Text style={styles.itemName}>{item.name}</Text>
+                <Text style={styles.itemPrice}>
+                  {item.isOutOfStock ? 'Out of stock' : `₹${item.price.toFixed(2)}`}
+                </Text>
+                {qty > 0 && <Text style={styles.addedBadge}>Added: {qty}</Text>}
+              </Pressable>
+            );
+          }}
         />
       )}
 
@@ -199,7 +230,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     fontSize: 15,
   },
-  categoryList: { flexGrow: 0, marginVertical: 8 },
+  // Bounded height + its own scroll -- see the Menu screen's identical fix for why: a
+  // restaurant with a lot of categories would otherwise push the item grid off the bottom.
+  categoryScroll: { flexGrow: 0, maxHeight: 132, marginVertical: 8 },
+  categoryWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12 },
   categoryChip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: '#eee' },
   categoryChipActive: { backgroundColor: '#2563eb' },
   categoryChipText: { color: '#333', fontWeight: '600' },
@@ -218,6 +252,7 @@ const styles = StyleSheet.create({
   itemCardDisabled: { opacity: 0.4 },
   itemName: { fontSize: 15, fontWeight: '600' },
   itemPrice: { fontSize: 13, color: '#666', marginTop: 4 },
+  addedBadge: { fontSize: 11, color: '#2563eb', fontWeight: '700', marginTop: 4 },
   cartBar: {
     position: 'absolute',
     bottom: 0,

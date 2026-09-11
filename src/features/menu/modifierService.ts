@@ -24,6 +24,22 @@ export async function listModifierGroups(restaurantId: string): Promise<Modifier
 }
 
 /** Modifier groups attached to one item, in display order — used by the order-entry modifier picker. */
+/** How many distinct menu items each of these groups is currently attached to -- lets a caller
+ * tell a genuinely shared group (e.g. "Spice Level" reused across many dishes) apart from one
+ * that's really private to a single item (e.g. a per-item "Portion" group created just to hold
+ * that one dish's Half/Full price delta). */
+export async function getModifierGroupUsageCounts(groupIds: string[]): Promise<Map<string, number>> {
+  if (groupIds.length === 0) return new Map();
+  const links = await db.query.menuItemModifierGroups.findMany({
+    where: (l, { inArray: inArrayOp }) => inArrayOp(l.modifierGroupId, groupIds),
+  });
+  const counts = new Map<string, number>();
+  for (const link of links) {
+    counts.set(link.modifierGroupId, (counts.get(link.modifierGroupId) ?? 0) + 1);
+  }
+  return counts;
+}
+
 export async function getModifierGroupsForItem(menuItemId: string): Promise<ModifierGroupWithModifiers[]> {
   const links = await db.query.menuItemModifierGroups.findMany({
     where: (l, { eq: eqOp }) => eqOp(l.menuItemId, menuItemId),
@@ -101,11 +117,11 @@ export async function createModifier(input: ModifierInput): Promise<string> {
 }
 
 export async function updateModifier(id: string, input: Partial<Omit<ModifierInput, 'modifierGroupId'>>): Promise<void> {
-  await db.update(modifiers).set(input).where(eq(modifiers.id, id));
+  await db.update(modifiers).set({ ...input, updatedAt: new Date() }).where(eq(modifiers.id, id));
 }
 
 export async function deleteModifier(id: string): Promise<void> {
-  await db.update(modifiers).set({ isActive: false }).where(eq(modifiers.id, id));
+  await db.update(modifiers).set({ isActive: false, updatedAt: new Date() }).where(eq(modifiers.id, id));
 }
 
 export async function attachModifierGroupToItem(

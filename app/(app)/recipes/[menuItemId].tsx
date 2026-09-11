@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -7,6 +7,7 @@ import { getItem } from '@/features/menu/itemService';
 import {
   formatQuantity,
   getRecipeIngredients,
+  getRecipeInputUnit,
   listInventoryItems,
   setRecipeIngredients,
 } from '@/features/inventory/inventoryService';
@@ -22,6 +23,7 @@ export default function RecipeIngredientsScreen() {
   // string value is the quantity-required field's raw text so the user can freely edit it
   // (including clearing it) without fighting a parsed-number round-trip.
   const [selected, setSelected] = useState<Record<string, string>>({});
+  const [search, setSearch] = useState('');
 
   const itemQuery = useQuery({ queryKey: ['item', menuItemId], queryFn: () => getItem(menuItemId) });
   const inventoryQuery = useQuery({
@@ -38,7 +40,10 @@ export default function RecipeIngredientsScreen() {
     if (!existingQuery.data) return;
     const initial: Record<string, string> = {};
     for (const row of existingQuery.data) {
-      initial[row.inventoryItemId] = String(row.quantityRequired);
+      // Stored quantityRequired is always in the inventory item's own stock unit (kg, l, ...);
+      // the field displays it in the finer per-serving unit (g, ml, ...) where one applies.
+      const { factor } = getRecipeInputUnit(row.inventoryItem.unit);
+      initial[row.inventoryItemId] = formatQuantity(row.quantityRequired * factor);
     }
     setSelected(initial);
   }, [existingQuery.data]);
@@ -60,10 +65,17 @@ export default function RecipeIngredientsScreen() {
     setSelected((prev) => ({ ...prev, [inventoryItemId]: value }));
   }
 
+  const inventoryItems = useMemo(() => inventoryQuery.data ?? [], [inventoryQuery.data]);
+  const inventoryById = useMemo(() => new Map(inventoryItems.map((i) => [i.id, i])), [inventoryItems]);
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       const rows = Object.entries(selected)
-        .map(([inventoryItemId, qty]) => ({ inventoryItemId, quantityRequired: parseFloat(qty) || 0 }))
+        .map(([inventoryItemId, qty]) => {
+          const unit = inventoryById.get(inventoryItemId)?.unit ?? '';
+          const { factor } = getRecipeInputUnit(unit);
+          return { inventoryItemId, quantityRequired: (parseFloat(qty) || 0) / factor };
+        })
         .filter((r) => r.quantityRequired > 0);
       await setRecipeIngredients(menuItemId, rows);
     },
@@ -74,10 +86,14 @@ export default function RecipeIngredientsScreen() {
     },
   });
 
-  const inventoryItems = inventoryQuery.data ?? [];
+  const visibleInventoryItems = useMemo(() => {
+    if (!search.trim()) return inventoryItems;
+    const q = search.trim().toLowerCase();
+    return inventoryItems.filter((i) => i.name.toLowerCase().includes(q));
+  }, [inventoryItems, search]);
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
       <Text style={styles.itemName}>{itemQuery.data?.name}</Text>
       <Text style={styles.hint}>Select which inventory items this dish uses, and how much of each per serving.</Text>
 
@@ -85,8 +101,23 @@ export default function RecipeIngredientsScreen() {
         <Text style={styles.empty}>No inventory items yet. Add some from the Inventory tab first.</Text>
       )}
 
-      {inventoryItems.map((inv) => {
+      {inventoryItems.length > 0 && (
+        <TextInput
+          style={styles.search}
+          placeholder="Search inventory items"
+          value={search}
+          onChangeText={setSearch}
+          placeholderTextColor="#999"
+        />
+      )}
+
+      {inventoryItems.length > 0 && visibleInventoryItems.length === 0 && (
+        <Text style={styles.empty}>No inventory items match &quot;{search}&quot;.</Text>
+      )}
+
+      {visibleInventoryItems.map((inv) => {
         const isSelected = inv.id in selected;
+        const inputUnit = getRecipeInputUnit(inv.unit);
         return (
           <View key={inv.id} style={styles.row}>
             <Pressable style={styles.rowHeader} onPress={() => toggle(inv.id)}>
@@ -98,7 +129,7 @@ export default function RecipeIngredientsScreen() {
             </Pressable>
             {isSelected && (
               <View style={styles.quantityRow}>
-                <Text style={styles.quantityLabel}>Required per serving (in {inv.unit})</Text>
+                <Text style={styles.quantityLabel}>Required per serving (in {inputUnit.label})</Text>
                 <TextInput
                   style={styles.quantityInput}
                   value={selected[inv.id]}
@@ -122,6 +153,15 @@ const styles = StyleSheet.create({
   itemName: { fontSize: 20, fontWeight: '700', marginBottom: 4 },
   hint: { fontSize: 13, color: '#666', marginBottom: 16 },
   empty: { color: '#999', marginBottom: 16 },
+  search: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 15,
+    marginBottom: 12,
+  },
   row: { backgroundColor: '#f5f5f5', borderRadius: 10, padding: 12, marginBottom: 8 },
   rowHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   checkbox: { width: 20, height: 20, borderRadius: 4, borderWidth: 2, borderColor: '#999' },
