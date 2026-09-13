@@ -64,7 +64,7 @@ export default function MenuScanReviewScreen() {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
       <Text style={styles.title}>Review extracted items</Text>
       <Text style={styles.subtitle}>Edit or exclude anything before saving to your menu.</Text>
 

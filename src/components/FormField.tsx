@@ -23,5 +23,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 16,
+    // Explicit, rather than left to inherit a platform/theme default -- a filled-in value
+    // (e.g. a phone number pulled in from a cloud restore) must never be mistakable for the
+    // placeholder text sitting in the same spot when empty.
+    color: '#111',
   },
 });

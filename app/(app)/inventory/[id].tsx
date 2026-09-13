@@ -11,6 +11,8 @@ import {
   updateInventoryItem,
 } from '@/features/inventory/inventoryService';
 import { FormField } from '@/components/FormField';
+import { UnitPicker } from '@/components/UnitPicker';
+import { CategoryPicker } from '@/components/CategoryPicker';
 import { Button } from '@/components/Button';
 
 export default function InventoryItemEditorScreen() {
@@ -21,6 +23,7 @@ export default function InventoryItemEditorScreen() {
   const queryClient = useQueryClient();
 
   const [name, setName] = useState('');
+  const [category, setCategory] = useState<string | null>(null);
   const [unit, setUnit] = useState('');
   const [quantity, setQuantity] = useState('');
   const [lowStockThreshold, setLowStockThreshold] = useState('');
@@ -37,6 +40,7 @@ export default function InventoryItemEditorScreen() {
     const item = itemQuery.data;
     if (!item) return;
     setName(item.name);
+    setCategory(item.category ?? null);
     setUnit(item.unit);
     setQuantity(formatQuantity(item.quantity));
     setLowStockThreshold(item.lowStockThreshold != null ? String(item.lowStockThreshold) : '');
@@ -54,6 +58,7 @@ export default function InventoryItemEditorScreen() {
       const input = {
         restaurantId,
         name,
+        category: category ?? undefined,
         unit,
         quantity: parseFloat(quantity) || 0,
         lowStockThreshold: lowStockThreshold ? parseFloat(lowStockThreshold) : undefined,
@@ -82,9 +87,10 @@ export default function InventoryItemEditorScreen() {
   const canSave = name.trim().length > 0 && unit.trim().length > 0;
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
       <FormField label="Item name" value={name} onChangeText={setName} placeholder="e.g. Paneer" />
-      <FormField label="Unit" value={unit} onChangeText={setUnit} placeholder="e.g. kg, l, pcs" />
+      <CategoryPicker label="Category (optional)" value={category} onChange={setCategory} />
+      <UnitPicker label="Unit" value={unit} onChange={setUnit} />
       <FormField label="Quantity in stock" value={quantity} onChangeText={setQuantity} keyboardType="decimal-pad" placeholder="0" />
       <FormField
         label="Low stock threshold (optional)"

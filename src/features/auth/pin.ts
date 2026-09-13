@@ -16,3 +16,9 @@ export async function verifyPin(pin: string, salt: string, expectedHash: string)
   const hash = await hashPin(pin, salt);
   return hash === expectedHash;
 }
+
+/** Matches the cloud's unsalted SHA-256(pin) scheme (see /pair, /staff in api/src/index.ts) --
+ * used only to verify a cloud-restored staff row's PIN on its first login on this device. */
+export async function hashPinForCloud(pin: string): Promise<string> {
+  return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, pin);
+}

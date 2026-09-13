@@ -73,6 +73,12 @@ export const modifiers = sqliteTable('modifiers', {
   priceDelta: real('price_delta').notNull().default(0),
   sortOrder: integer('sort_order').notNull().default(0),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .$defaultFn(() => new Date()),
 });
 
 /** Many-to-many: which modifier groups apply to which items, without duplicating menu entries. */
@@ -86,6 +92,9 @@ export const menuItemModifierGroups = sqliteTable(
       .notNull()
       .references(() => modifierGroups.id),
     sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .$defaultFn(() => new Date()),
   },
   (t) => [primaryKey({ columns: [t.menuItemId, t.modifierGroupId] })],
 );
@@ -118,4 +127,7 @@ export const comboDealItems = sqliteTable('combo_deal_items', {
     .references(() => menuItems.id),
   quantity: integer('quantity').notNull().default(1),
   allowSubstitution: integer('allow_substitution', { mode: 'boolean' }).notNull().default(false),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .$defaultFn(() => new Date()),
 });

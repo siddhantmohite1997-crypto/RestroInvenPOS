@@ -50,7 +50,7 @@ export default function DiscountScreen() {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
       <Text style={styles.sectionLabel}>Discount type</Text>
       <View style={styles.chipRow}>
         <Pressable

@@ -39,6 +39,9 @@ yarn-error.*
 # API build output (Railway builds this fresh from api/src)
 api/lib/
 
+# Supabase CLI local cache
+supabase/.temp/
+
 # generated native folders
 /ios
 /android

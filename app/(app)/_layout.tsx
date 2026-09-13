@@ -16,13 +16,18 @@ export default function AppLayout() {
   // Owner/Captain/Waiter tab visibility. `admin` is labeled "Captain" and `cashier` is
   // labeled "Waiter" throughout the UI — see the comment on StaffRole in permissions.ts.
   // Owner is back-office focused (no Billing/Tables); Waiter is floor-focused (no
-  // Inventory/Recipes/Reports). Settings itself stays visible to everyone — its content is
+  // Inventory/Recipes/Reports/Menu). Settings itself stays visible to everyone — its content is
   // what's stripped down per role, since Captain/Waiter still need a way to log out.
   const isOwner = currentUser.role === 'owner';
   const isWaiter = currentUser.role === 'cashier';
   const showBillingAndTables = !isOwner;
   const showInventoryAndRecipes = !isWaiter;
   const showReports = isOwner;
+  // Waiters already browse and add menu items from inside the order screen itself (Billing →
+  // an order → item picker) -- the Menu tab is purely an editing tool (categories, modifiers,
+  // combos, scan-to-menu) that only Owner/Captain use, so it's just an extra tap to skip past
+  // for a Waiter.
+  const showMenu = !isWaiter;
 
   return (
     <Tabs screenOptions={{ headerShown: true }} initialRouteName={isOwner ? 'menu' : 'orders'}>
@@ -49,6 +54,7 @@ export default function AppLayout() {
         options={{
           title: 'Menu',
           headerShown: false,
+          href: showMenu ? undefined : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="restaurant-outline" size={size} color={color} />,
         }}
       />

@@ -78,7 +78,7 @@ export default function ComboEditorScreen() {
   const canSave = name.trim().length > 0 && parseFloat(price) >= 0 && items.length > 0;
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
       <FormField label="Combo name" value={name} onChangeText={setName} placeholder="e.g. Lunch Combo" />
       <FormField label="Combo price" value={price} onChangeText={setPrice} keyboardType="decimal-pad" placeholder="0.00" />
 

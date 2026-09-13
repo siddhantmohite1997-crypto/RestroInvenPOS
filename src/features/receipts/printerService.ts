@@ -8,10 +8,20 @@ export interface PrinterCheckResult {
 /**
  * Print receipt HTML with error handling.
  * If print fails or user cancels, returns error message.
+ *
+ * Like printToFileAsync, printAsync defaults to US Letter (612x792px) unless given explicit
+ * pixel dimensions -- callers must pass the thermal-width/estimated-height pair from
+ * receiptHtml.ts (RECEIPT_PDF_WIDTH_PX / estimateReceiptPdfHeightPx), the same values already
+ * used for the shared/emailed PDF, or a real thermal printer receives a job scaled for
+ * full-size paper instead of an 80mm roll.
  */
-export async function printReceiptHtml(html: string): Promise<{ success: boolean; message?: string }> {
+export async function printReceiptHtml(
+  html: string,
+  widthPx: number,
+  heightPx: number,
+): Promise<{ success: boolean; message?: string }> {
   try {
-    await Print.printAsync({ html });
+    await Print.printAsync({ html, width: widthPx, height: heightPx });
     return { success: true, message: 'Receipt printed successfully.' };
   } catch (err) {
     const errorMessage = String(err);

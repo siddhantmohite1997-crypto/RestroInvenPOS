@@ -87,7 +87,7 @@ export default function ModifierGroupEditorScreen() {
   });
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
       <FormField label="Group name" value={name} onChangeText={setName} placeholder="e.g. Spice Level" />
 
       <View style={styles.switchRow}>

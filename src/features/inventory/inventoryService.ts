@@ -13,6 +13,17 @@ export function formatQuantity(quantity: number): string {
   return String(Math.round((quantity + Number.EPSILON) * 1000) / 1000);
 }
 
+/** Nobody thinks of a per-serving recipe amount as "0.150 kg" or "0.030 l" -- they think "150 g"
+ * or "30 ml". Recipe entry converts to/from this finer unit for kg/l stock items; anything else
+ * (pcs, box, packet, ...) has no natural finer subunit, so it's entered directly, factor 1. The
+ * inventory item's own stock quantity is never touched by this -- it stays in its stored unit. */
+export function getRecipeInputUnit(stockUnit: string): { label: string; factor: number } {
+  const u = stockUnit.trim().toLowerCase();
+  if (u === 'kg') return { label: 'g', factor: 1000 };
+  if (u === 'l' || u === 'ltr' || u === 'litre' || u === 'liter') return { label: 'ml', factor: 1000 };
+  return { label: stockUnit, factor: 1 };
+}
+
 export async function listInventoryItems(restaurantId: string): Promise<InventoryItem[]> {
   return db.query.inventoryItems.findMany({
     where: (i, { and, eq: eqOp }) => and(eqOp(i.restaurantId, restaurantId), eqOp(i.isActive, true)),
@@ -28,6 +39,7 @@ export async function getInventoryItem(id: string): Promise<InventoryItem | null
 export interface InventoryItemInput {
   restaurantId: string;
   name: string;
+  category?: string;
   unit: string;
   quantity: number;
   lowStockThreshold?: number;
@@ -40,6 +52,7 @@ export async function createInventoryItem(input: InventoryItemInput): Promise<st
     id,
     restaurantId: input.restaurantId,
     name: input.name,
+    category: input.category,
     unit: input.unit,
     quantity: input.quantity,
     lowStockThreshold: input.lowStockThreshold,
@@ -55,13 +68,19 @@ export async function updateInventoryItem(id: string, input: Partial<InventoryIt
     .where(eq(inventoryItems.id, id));
 }
 
-/** Soft delete. Also drops any recipe_ingredients rows pointing at this item -- unlike other
- * soft-deletes in this app, leaving them behind wouldn't just show stale data, it would let a
- * dish keep silently deducting quantity from an item the user can no longer see or manage. */
+/** Soft delete. Also soft-deletes any recipe_ingredients rows pointing at this item -- unlike
+ * other soft-deletes in this app, leaving them active behind wouldn't just show stale data, it
+ * would let a dish keep silently deducting quantity from an item the user can no longer see or
+ * manage. A hard delete here would never propagate to Supabase (sync only ever pushes upserts),
+ * leaving an orphaned row there forever -- soft delete is what a delete actually looks like in
+ * this app's push-only sync model. */
 export async function deleteInventoryItem(id: string): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.update(inventoryItems).set({ isActive: false, updatedAt: new Date() }).where(eq(inventoryItems.id, id));
-    await tx.delete(recipeIngredients).where(eq(recipeIngredients.inventoryItemId, id));
+    await tx
+      .update(recipeIngredients)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(recipeIngredients.inventoryItemId, id));
   });
 }
 
@@ -71,7 +90,7 @@ export interface RecipeIngredientWithItem extends RecipeIngredient {
 
 export async function getRecipeIngredients(menuItemId: string): Promise<RecipeIngredientWithItem[]> {
   const rows = await db.query.recipeIngredients.findMany({
-    where: (r, { eq: eqOp }) => eqOp(r.menuItemId, menuItemId),
+    where: (r, { and, eq: eqOp }) => and(eqOp(r.menuItemId, menuItemId), eqOp(r.isActive, true)),
   });
   const withItems = await Promise.all(
     rows.map(async (r) => {
@@ -82,21 +101,47 @@ export async function getRecipeIngredients(menuItemId: string): Promise<RecipeIn
   return withItems.filter((r): r is RecipeIngredientWithItem => r !== null);
 }
 
-/** Replace-all: the linking screen saves its whole ingredient list at once rather than
- * attaching/detaching one row at a time. */
+/** Replace-all, but as an upsert-by-inventoryItemId rather than delete-all-then-reinsert: a row
+ * for an ingredient still present keeps its id and just gets its quantity updated, a newly added
+ * ingredient gets a fresh row, and a removed ingredient is soft-deleted (isActive=false) rather
+ * than hard-deleted. Hard-deleting and reinserting with new ids -- the previous approach -- left
+ * every prior save's rows orphaned in Supabase forever, since this app's sync only ever pushes
+ * upserts keyed by id and never propagates a local hard delete. */
 export async function setRecipeIngredients(
   menuItemId: string,
   rows: { inventoryItemId: string; quantityRequired: number }[],
 ): Promise<void> {
   await db.transaction(async (tx) => {
-    await tx.delete(recipeIngredients).where(eq(recipeIngredients.menuItemId, menuItemId));
+    const existing = await tx.query.recipeIngredients.findMany({
+      where: (r, { eq: eqOp }) => eqOp(r.menuItemId, menuItemId),
+    });
+    const existingByItem = new Map(existing.map((r) => [r.inventoryItemId, r]));
+    const incomingItemIds = new Set(rows.map((r) => r.inventoryItemId));
+
     for (const row of rows) {
-      await tx.insert(recipeIngredients).values({
-        id: generateId(),
-        menuItemId,
-        inventoryItemId: row.inventoryItemId,
-        quantityRequired: row.quantityRequired,
-      });
+      const match = existingByItem.get(row.inventoryItemId);
+      if (match) {
+        await tx
+          .update(recipeIngredients)
+          .set({ quantityRequired: row.quantityRequired, isActive: true, updatedAt: new Date() })
+          .where(eq(recipeIngredients.id, match.id));
+      } else {
+        await tx.insert(recipeIngredients).values({
+          id: generateId(),
+          menuItemId,
+          inventoryItemId: row.inventoryItemId,
+          quantityRequired: row.quantityRequired,
+        });
+      }
+    }
+
+    for (const old of existing) {
+      if (!incomingItemIds.has(old.inventoryItemId) && old.isActive) {
+        await tx
+          .update(recipeIngredients)
+          .set({ isActive: false, updatedAt: new Date() })
+          .where(eq(recipeIngredients.id, old.id));
+      }
     }
   });
 }
@@ -111,7 +156,7 @@ export async function countIngredientsByMenuItem(restaurantId: string): Promise<
   const counts: Record<string, number> = {};
   for (const item of rows) {
     const linked = await db.query.recipeIngredients.findMany({
-      where: (r, { eq: eqOp }) => eqOp(r.menuItemId, item.id),
+      where: (r, { and, eq: eqOp }) => and(eqOp(r.menuItemId, item.id), eqOp(r.isActive, true)),
       columns: { id: true },
     });
     counts[item.id] = linked.length;
@@ -126,7 +171,7 @@ export async function countIngredientsByMenuItem(restaurantId: string): Promise<
 export async function consumeIngredients(menuItemId: string | null | undefined, quantityDelta: number): Promise<void> {
   if (!menuItemId || quantityDelta === 0) return;
   const rows = await db.query.recipeIngredients.findMany({
-    where: (r, { eq: eqOp }) => eqOp(r.menuItemId, menuItemId),
+    where: (r, { and, eq: eqOp }) => and(eqOp(r.menuItemId, menuItemId), eqOp(r.isActive, true)),
   });
   for (const row of rows) {
     // Rounded to 3dp (matching the NUMERIC(10,3) column in Supabase) at write time, not just

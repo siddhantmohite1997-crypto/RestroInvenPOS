@@ -90,7 +90,7 @@ export default function LoginScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>{restaurant?.name ?? 'POS'}</Text>
+      <Text style={styles.title}>{restaurant?.name ?? 'RestroInven'}</Text>
       <Text style={styles.subtitle}>Enter your PIN</Text>
 
       <View style={styles.dots}>

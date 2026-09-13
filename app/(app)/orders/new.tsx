@@ -42,7 +42,7 @@ export default function NewOrderScreen() {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
       <Text style={styles.title}>Order type</Text>
 
       <Button label="Dine-in" onPress={onDineIn} style={styles.button} />

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { Alert } from 'react-native';
 import { db } from '@/db/client';
 import type { AuthenticatedUser } from '@/features/auth/authService';
 import { authenticateByPin } from '@/features/auth/authService';
@@ -57,6 +58,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
 
     set({ currentUser: user, currentPin: pin });
+
+    // Payment-reminder popup: Owner/Captain only (Waiter never sees billing concerns), shown
+    // on every login while a reminder is active -- deliberately not throttled to once/day, so
+    // it stays visible however many times a day the app is opened during the reminder window.
+    if (status.online && status.subscriptionReminder && (user.role === 'owner' || user.role === 'admin')) {
+      const { tier, message } = status.subscriptionReminder;
+      const title = tier === 'final_notice' ? 'Final notice' : tier === 'due_today' ? 'Payment due today' : 'Subscription reminder';
+      Alert.alert(title, message);
+    }
+
     return { ok: true };
   },
 

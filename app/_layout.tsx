@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { db } from '@/db/client';
 import migrations from '@/db/migrations/migrations';
 import { useAuthStore } from '@/store/authStore';
+import { runComboMealsDataFix } from '@/features/menu/comboMealsDataFix';
 
 const queryClient = new QueryClient();
 
@@ -20,7 +21,17 @@ export default function RootLayout() {
     // Whether this device has a restaurant yet (locally created or paired) is decided
     // by (setup)/welcome.tsx, not here — hydrate() just reflects whatever's already
     // in the local DB (possibly nothing yet), and (auth)/_layout.tsx routes accordingly.
-    hydrate().then(() => setBootstrapped(true));
+    hydrate().then(async () => {
+      const restaurant = useAuthStore.getState().restaurant;
+      if (restaurant) {
+        // Best-effort: a one-time data correction should never be able to strand the app on
+        // the boot spinner if it hits something unexpected.
+        await runComboMealsDataFix(restaurant.id).catch((err) =>
+          console.error('runComboMealsDataFix failed:', err),
+        );
+      }
+      setBootstrapped(true);
+    });
   }, [migrationsReady, hydrate]);
 
   if (migrationError) {

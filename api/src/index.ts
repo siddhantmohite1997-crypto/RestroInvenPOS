@@ -1,8 +1,9 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
+import { getSubscriptionStatus, parseDateOnly } from './subscriptionDates';
 
 dotenv.config();
 
@@ -11,7 +12,10 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+// A full sync payload scales with the restaurant's menu size (e.g. 276 items + modifiers +
+// inventory for a real client) and can comfortably exceed Express's 100kb default, so this
+// needs real headroom rather than the default.
+app.use(express.json({ limit: '20mb' }));
 
 // Supabase client
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -94,6 +98,41 @@ async function verifyPinAuth(
 }
 
 // ============================================================================
+// TABLE MAP (shared by /sync's push and /restore's pull)
+// ============================================================================
+
+// Object key order below is also FK-safe upsert order, and it matters: each table must come
+// after every table it has a foreign key into (e.g. menuItems references taxRules, so taxRules
+// must be upserted first) or the insert fails on a missing FK target. This is NOT the same
+// order syncService.ts happens to collect the data in on the client — that order only reflects
+// independent SELECT queries and has no FK constraints to respect. /restore's client-side
+// insert must walk this same order (parents before children) for the same reason.
+const TABLE_MAP: Record<string, { table: string; conflictTarget: string }> = {
+  restaurants: { table: 'restaurants', conflictTarget: 'id' },
+  categories: { table: 'categories', conflictTarget: 'id' },
+  taxRules: { table: 'tax_rules', conflictTarget: 'id' },
+  taxComponents: { table: 'tax_components', conflictTarget: 'id' },
+  menuItems: { table: 'menu_items', conflictTarget: 'id' },
+  modifierGroups: { table: 'modifier_groups', conflictTarget: 'id' },
+  modifiers: { table: 'modifiers', conflictTarget: 'id' },
+  menuItemModifierGroups: {
+    table: 'menu_item_modifier_groups',
+    conflictTarget: 'menu_item_id,modifier_group_id',
+  },
+  comboDeals: { table: 'combo_deals', conflictTarget: 'id' },
+  comboDealItems: { table: 'combo_deal_items', conflictTarget: 'id' },
+  inventoryItems: { table: 'inventory_items', conflictTarget: 'id' },
+  recipeIngredients: { table: 'recipe_ingredients', conflictTarget: 'id' },
+  diningTables: { table: 'dining_tables', conflictTarget: 'id' },
+  orders: { table: 'orders', conflictTarget: 'id' },
+  orderItems: { table: 'order_items', conflictTarget: 'id' },
+  orderItemModifiers: { table: 'order_item_modifiers', conflictTarget: 'id' },
+  discounts: { table: 'discounts', conflictTarget: 'id' },
+  payments: { table: 'payments', conflictTarget: 'id' },
+  auditLogs: { table: 'audit_logs', conflictTarget: 'id' },
+};
+
+// ============================================================================
 // PAIR ENDPOINT
 // ============================================================================
 
@@ -149,6 +188,90 @@ app.post('/pair', async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// RESTORE ENDPOINT
+// ============================================================================
+
+const RESTORE_PAGE_SIZE = 1000;
+
+/** PostgREST caps a single response at 1000 rows by default — page through with .range()
+ * so a restaurant with more than 1000 orders (or any other table) doesn't silently lose data. */
+async function fetchAllRows(
+  pgTable: string,
+  restaurantId: string,
+): Promise<Record<string, unknown>[]> {
+  const rows: Record<string, unknown>[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from(pgTable)
+      .select('*')
+      .eq('restaurant_id', restaurantId)
+      .range(from, from + RESTORE_PAGE_SIZE - 1);
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if (!data || data.length < RESTORE_PAGE_SIZE) break;
+    from += RESTORE_PAGE_SIZE;
+  }
+  return rows;
+}
+
+/**
+ * Called right after /pair (or standalone, re-authenticated the same way) to pull every row
+ * this restaurant has in the cloud back down onto a device that just attached to it — a brand
+ * new phone, or the SAME phone after an uninstall/reinstall wiped its local SQLite. Without
+ * this, pairing only ever seeded the restaurant's own business-details row and the ONE staff
+ * record whose PIN was typed in; every menu item, inventory item, recipe link, other staff
+ * member, tax rule, and order history the restaurant had built up was invisible on the new
+ * device even though it was sitting in Supabase the whole time.
+ *
+ * Auth is the same restaurantId+PIN check as /pair — any staff member's own PIN can trigger a
+ * restore, matching how pairing itself already works regardless of role.
+ *
+ * Staff PINs are never sent in restorable form to a device other than their own: the `staff`
+ * array returned here carries `pin_hash`, which is the cloud's unsalted SHA-256(pin) (see
+ * verifyPinAuth above) — not reversible to the plaintext PIN, and not usable as-is for local
+ * login (the device's own scheme is a per-device-salted hash). The client stores it as a
+ * one-time bridge so that staff member's real first login on this device can verify against it
+ * and upgrade to a proper local salted hash — see tryCloudPinFallback in authService.ts.
+ */
+app.post('/restore', async (req: Request, res: Response) => {
+  try {
+    const { restaurantId, pin } = req.body as { restaurantId?: string; pin?: string };
+
+    if (!restaurantId || !pin) {
+      return res.status(400).json({ error: 'restaurantId and pin required' });
+    }
+
+    const auth = await verifyPinAuth(restaurantId, pin);
+    if (!auth.valid) {
+      return res.status(401).json({ error: auth.reason || 'Authentication failed' });
+    }
+
+    // No is_active column on the cloud staff table -- it has no soft-delete concept, unlike
+    // the local users table. Every restored staff row is treated as active.
+    const { data: staff, error: staffError } = await supabase
+      .from('staff')
+      .select('id, name, role, pin_hash')
+      .eq('restaurant_id', restaurantId);
+    if (staffError) {
+      console.error(`/restore: staff lookup failed for ${restaurantId}:`, staffError);
+      throw staffError;
+    }
+
+    const data: Record<string, Record<string, unknown>[]> = {};
+    for (const [jsKey, { table: pgTable }] of Object.entries(TABLE_MAP)) {
+      if (jsKey === 'restaurants') continue; // fetched separately below, keyed by id not restaurant_id
+      data[jsKey] = await fetchAllRows(pgTable, restaurantId);
+    }
+
+    res.json({ staff: staff ?? [], data });
+  } catch (err) {
+    console.error('Restore error:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Restore failed' });
+  }
+});
+
+// ============================================================================
 // STAFF ENDPOINT
 // ============================================================================
 
@@ -180,6 +303,25 @@ app.post('/staff', async (req: Request, res: Response) => {
     const auth = await verifyPinAuth(restaurantId, authPin);
     if (!auth.valid) {
       return res.status(401).json({ error: auth.reason || 'Authentication failed' });
+    }
+
+    // pin_hash is NOT NULL in the staff table. Omitting `pin` on an edit is normally fine --
+    // it means "keep the current hash" -- but only if a cloud row already exists to keep it
+    // from. If this staff member's first push never made it (offline at creation time, etc.),
+    // there's no existing row and no pin_hash to fall back to, so the upsert below would
+    // insert with a null pin_hash and crash on the NOT NULL constraint. Check first so that
+    // case surfaces as an actionable message instead of a raw Postgres error.
+    if (!pin) {
+      const { data: existingStaff } = await supabase
+        .from('staff')
+        .select('id')
+        .eq('id', staffId)
+        .maybeSingle();
+      if (!existingStaff) {
+        return res.status(400).json({
+          error: `${name} hasn't been synced to the cloud before -- enter their PIN once to finish setting them up.`,
+        });
+      }
     }
 
     const upsertRow: Record<string, unknown> = {
@@ -228,7 +370,7 @@ app.post('/sync', async (req: Request, res: Response) => {
     if (checkOnly) {
       const { data: restaurant, error: restaurantError } = await supabase
         .from('restaurants')
-        .select('enabled')
+        .select('enabled, subscription_plan, next_due_date')
         .eq('id', restaurantId)
         .single();
 
@@ -243,7 +385,19 @@ app.post('/sync', async (req: Request, res: Response) => {
       if (!restaurant.enabled) {
         return res.status(401).json({ error: 'Restaurant is currently disabled' });
       }
-      return res.json({ success: true, enabled: true, checkOnly: true });
+
+      // Reported to the app so it can show a payment-reminder popup after login (Owner/Captain
+      // only, decided client-side) -- never null when a reminder is warranted, since a plan
+      // without a subscription_plan set is intentionally excluded (tier would be meaningless).
+      let subscriptionReminder: { tier: string; message: string; nextDueDate: string } | null = null;
+      if (restaurant.subscription_plan && restaurant.next_due_date) {
+        const status = getSubscriptionStatus(parseDateOnly(restaurant.next_due_date), new Date());
+        if (status.tier !== 'ok') {
+          subscriptionReminder = { tier: status.tier, message: status.message, nextDueDate: restaurant.next_due_date };
+        }
+      }
+
+      return res.json({ success: true, enabled: true, checkOnly: true, subscriptionReminder });
     }
 
     // Verify PIN and restaurant
@@ -260,37 +414,8 @@ app.post('/sync', async (req: Request, res: Response) => {
     // convert every row's own keys the same way (customerEmail -> customer_email, etc.),
     // since PostgREST matches JSON keys to column names literally with no case folding.
     // menuItemModifierGroups has no `id` column locally (composite key on menuItemId+modifierGroupId),
-    // so it needs its own onConflict target instead of the default 'id'.
-    //
-    // Object key order below is also the upsert order, and it matters: each table must come
-    // after every table it has a foreign key into (e.g. menuItems references taxRules, so
-    // taxRules must be upserted first) or the insert fails on a missing FK target. This is NOT
-    // the same order syncService.ts happens to collect the data in on the client — that order
-    // only reflects independent SELECT queries and has no FK constraints to respect.
-    const TABLE_MAP: Record<string, { table: string; conflictTarget: string }> = {
-      restaurants: { table: 'restaurants', conflictTarget: 'id' },
-      categories: { table: 'categories', conflictTarget: 'id' },
-      taxRules: { table: 'tax_rules', conflictTarget: 'id' },
-      taxComponents: { table: 'tax_components', conflictTarget: 'id' },
-      menuItems: { table: 'menu_items', conflictTarget: 'id' },
-      modifierGroups: { table: 'modifier_groups', conflictTarget: 'id' },
-      modifiers: { table: 'modifiers', conflictTarget: 'id' },
-      menuItemModifierGroups: {
-        table: 'menu_item_modifier_groups',
-        conflictTarget: 'menu_item_id,modifier_group_id',
-      },
-      comboDeals: { table: 'combo_deals', conflictTarget: 'id' },
-      comboDealItems: { table: 'combo_deal_items', conflictTarget: 'id' },
-      inventoryItems: { table: 'inventory_items', conflictTarget: 'id' },
-      recipeIngredients: { table: 'recipe_ingredients', conflictTarget: 'id' },
-      diningTables: { table: 'dining_tables', conflictTarget: 'id' },
-      orders: { table: 'orders', conflictTarget: 'id' },
-      orderItems: { table: 'order_items', conflictTarget: 'id' },
-      orderItemModifiers: { table: 'order_item_modifiers', conflictTarget: 'id' },
-      discounts: { table: 'discounts', conflictTarget: 'id' },
-      payments: { table: 'payments', conflictTarget: 'id' },
-      auditLogs: { table: 'audit_logs', conflictTarget: 'id' },
-    };
+    // so it needs its own onConflict target instead of the default 'id'. See the shared
+    // TABLE_MAP above for the FK-safe key order this loop relies on.
 
     const toSnakeCase = (key: string) =>
       key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -302,11 +427,18 @@ app.post('/sync', async (req: Request, res: Response) => {
       return result;
     };
 
+    // Batched, not one upsert call per row: a real restaurant's first sync easily carries
+    // several hundred rows (menu items, modifier links, etc.), and awaiting a separate
+    // network round-trip to Supabase for each one serialized into tens of seconds of pure
+    // latency -- the actual cause of "Sync timed out", not payload size or connection quality.
+    const SYNC_BATCH_SIZE = 500;
+
     for (const [jsKey, { table: pgTable, conflictTarget }] of Object.entries(TABLE_MAP)) {
       const rows = (syncData[jsKey] as Record<string, unknown>[]) || [];
       pushedCounts[jsKey] = 0;
+      if (rows.length === 0) continue;
 
-      for (const row of rows) {
+      const snakeRows = rows.map((row) => {
         // Remove changedAt (local diffing field, not a real column)
         const { changedAt: _changedAt, ...cleanRow } = row;
         const snakeRow = rowToSnakeCase(cleanRow);
@@ -315,11 +447,12 @@ app.post('/sync', async (req: Request, res: Response) => {
         // IS the restaurant record and has no such column (it doesn't reference itself).
         // Every other synced table gets it uniformly, including junction tables that don't
         // have it locally, for RLS/isolation defense-in-depth.
-        const rowWithRestaurant =
-          jsKey === 'restaurants' ? snakeRow : { ...snakeRow, restaurant_id: restaurantId };
+        return jsKey === 'restaurants' ? snakeRow : { ...snakeRow, restaurant_id: restaurantId };
+      });
 
-        // Upsert (insert or update)
-        const { error } = await supabase.from(pgTable).upsert(rowWithRestaurant, {
+      for (let i = 0; i < snakeRows.length; i += SYNC_BATCH_SIZE) {
+        const chunk = snakeRows.slice(i, i + SYNC_BATCH_SIZE);
+        const { error } = await supabase.from(pgTable).upsert(chunk, {
           onConflict: conflictTarget,
         });
 
@@ -327,9 +460,9 @@ app.post('/sync', async (req: Request, res: Response) => {
           console.error(`Error upserting ${pgTable}:`, error);
           throw error;
         }
-
-        pushedCounts[jsKey]++;
       }
+
+      pushedCounts[jsKey] = rows.length;
     }
 
     // Update last_synced_at
@@ -469,6 +602,22 @@ app.get('/health', (req: Request, res: Response) => {
 // ============================================================================
 // START SERVER
 // ============================================================================
+
+// Body-parser errors (oversized or malformed JSON) throw before any route handler runs, and
+// Express's default error handler renders them as an HTML page. The mobile client always
+// expects JSON back, so an HTML error page there surfaces as a confusing
+// "JSON Parse error: Unexpected character: <" instead of the actual problem -- catch it here
+// and always answer with JSON.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((err: Error & { status?: number; type?: string }, req: Request, res: Response, next: NextFunction) => {
+  const status = err.status ?? 500;
+  const message =
+    err.type === 'entity.too.large'
+      ? 'Sync payload too large for the server to accept. Contact support.'
+      : err.message || 'Unexpected server error';
+  console.error('Unhandled request error:', err);
+  res.status(status).json({ error: message });
+});
 
 app.listen(PORT, () => {
   console.log(`POS API running on port ${PORT}`);
