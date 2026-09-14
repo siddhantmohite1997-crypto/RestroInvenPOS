@@ -76,9 +76,14 @@ export default function ItemEditorScreen() {
   // item's private group, which is exactly what made this picker unusable for a restaurant with
   // one such group per menu item. Groups already attached to this item, unused groups, and
   // groups shared by 2+ items are all still genuinely relevant to show.
+  // While usage counts are still loading, `.data` is undefined for every group -- treating that
+  // the same as "usage 0" (unused, so show it) meant the picker showed every group, unfiltered,
+  // for as long as the query took to resolve. Show only already-attached groups until the counts
+  // are actually known, instead of defaulting open.
   const pickableGroups = (allModifierGroupsQuery.data ?? []).filter((g) => {
     if (attachedGroupIds.has(g.id)) return true;
-    return (usageCountsQuery.data?.get(g.id) ?? 0) !== 1;
+    if (usageCountsQuery.data === undefined) return false;
+    return (usageCountsQuery.data.get(g.id) ?? 0) !== 1;
   });
 
   /* eslint-disable react-hooks/set-state-in-effect -- hydrate the edit form once the record loads */
