@@ -87,6 +87,16 @@ function money(symbol: string, amount: number): string {
   return `${symbol}${amount.toFixed(2)}`;
 }
 
+/** Same formatting as money(), but for HTML contexts only: wraps the currency symbol in a span
+ * with a sans-serif fallback. The receipt's monospace font stack (Courier New/Courier/monospace)
+ * renders digits and layout nicely, but Android's generic "monospace" resolves to Roboto Mono,
+ * which is missing the ₹ glyph and silently substitutes "?" -- the system sans-serif font (used
+ * everywhere else in the app) does have it, so scoping just the symbol to that font fixes the
+ * printed/shared receipt without giving up monospace alignment for the amounts themselves. */
+function moneyHtml(symbol: string, amount: number): string {
+  return `<span class="cur">${escapeHtml(symbol)}</span>${amount.toFixed(2)}`;
+}
+
 function escapeHtml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -110,14 +120,14 @@ export function buildReceiptHtml(input: ReceiptInput): string {
             ${item.modifierNames.length ? `<div class="modifiers">${item.modifierNames.map(escapeHtml).join(', ')}</div>` : ''}
           </td>
           <td class="item-qty">${item.quantity}</td>
-          <td class="item-price">${money(symbol, item.unitPrice)}</td>
-          <td class="item-total">${money(symbol, item.lineTotal)}</td>
+          <td class="item-price">${moneyHtml(symbol, item.unitPrice)}</td>
+          <td class="item-total">${moneyHtml(symbol, item.lineTotal)}</td>
         </tr>`,
     )
     .join('');
 
   const taxRows = taxComponents
-    .map((c) => `<tr><td>${escapeHtml(c.label)}</td><td class="num">${money(symbol, c.amount)}</td></tr>`)
+    .map((c) => `<tr><td>${escapeHtml(c.label)}</td><td class="num">${moneyHtml(symbol, c.amount)}</td></tr>`)
     .join('');
 
   return `<!DOCTYPE html>
@@ -242,6 +252,14 @@ export function buildReceiptHtml(input: ReceiptInput): string {
             font-style: italic;
           }
 
+          /* Android's generic "monospace" (used by the body font stack above) resolves to
+             Roboto Mono, which lacks the ₹ glyph and silently renders it as "?" -- fall back to
+             the platform's default sans-serif font (which does have it) for the symbol only,
+             so amounts stay monospace-aligned while the currency symbol still renders correctly. */
+          .cur {
+            font-family: Roboto, 'Noto Sans', Arial, sans-serif;
+          }
+
           .totals {
             width: 100%;
             margin: 2mm 0;
@@ -338,15 +356,15 @@ export function buildReceiptHtml(input: ReceiptInput): string {
         <table class="totals">
           <tr>
             <td class="label">Subtotal</td>
-            <td class="amount">${money(symbol, order.subtotal)}</td>
+            <td class="amount">${moneyHtml(symbol, order.subtotal)}</td>
           </tr>
-          ${order.discountTotal > 0 ? `<tr><td class="label">Discount</td><td class="amount">-${money(symbol, order.discountTotal)}</td></tr>` : ''}
+          ${order.discountTotal > 0 ? `<tr><td class="label">Discount</td><td class="amount">-${moneyHtml(symbol, order.discountTotal)}</td></tr>` : ''}
           ${taxRows}
-          ${order.serviceChargeTotal > 0 ? `<tr><td class="label">Service Charge</td><td class="amount">${money(symbol, order.serviceChargeTotal)}</td></tr>` : ''}
-          ${order.roundingAdjustment !== 0 ? `<tr><td class="label">Rounding</td><td class="amount">${order.roundingAdjustment > 0 ? '+' : ''}${money(symbol, order.roundingAdjustment)}</td></tr>` : ''}
+          ${order.serviceChargeTotal > 0 ? `<tr><td class="label">Service Charge</td><td class="amount">${moneyHtml(symbol, order.serviceChargeTotal)}</td></tr>` : ''}
+          ${order.roundingAdjustment !== 0 ? `<tr><td class="label">Rounding</td><td class="amount">${order.roundingAdjustment > 0 ? '+' : ''}${moneyHtml(symbol, order.roundingAdjustment)}</td></tr>` : ''}
           <tr class="grand-total">
             <td class="label">TOTAL</td>
-            <td class="amount">${money(symbol, order.grandTotal)}</td>
+            <td class="amount">${moneyHtml(symbol, order.grandTotal)}</td>
           </tr>
           ${order.paymentMode ? `<tr><td class="label">Paid via</td><td class="amount">${escapeHtml(order.paymentMode)}</td></tr>` : ''}
         </table>
