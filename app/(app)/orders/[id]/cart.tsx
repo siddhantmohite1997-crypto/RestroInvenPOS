@@ -121,18 +121,23 @@ export default function CartScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Button
-          label="Hold / Park"
-          variant="secondary"
-          onPress={() => parkMutation.mutate()}
-          style={{ flex: 1 }}
-        />
-        <Button
-          label="Charge"
-          onPress={() => router.push(`/orders/${id}/payment`)}
-          disabled={order.items.length === 0}
-          style={{ flex: 1 }}
-        />
+        <Pressable onPress={() => router.push(`/orders/${id}/cancel`)} style={styles.cancelLink}>
+          <Text style={styles.cancelLinkText}>Cancel order</Text>
+        </Pressable>
+        <View style={styles.footerButtons}>
+          <Button
+            label="Hold / Park"
+            variant="secondary"
+            onPress={() => parkMutation.mutate()}
+            style={{ flex: 1 }}
+          />
+          <Button
+            label="Charge"
+            onPress={() => router.push(`/orders/${id}/payment`)}
+            disabled={order.items.length === 0}
+            style={{ flex: 1 }}
+          />
+        </View>
       </View>
     </View>
   );
@@ -200,10 +205,11 @@ const styles = StyleSheet.create({
   totalValue: { color: '#333' },
   totalLabelEmphasize: { fontSize: 17, fontWeight: '700', color: '#111' },
   footer: {
-    flexDirection: 'row',
-    gap: 8,
     padding: 16,
     borderTopWidth: 1,
     borderTopColor: '#eee',
   },
+  footerButtons: { flexDirection: 'row', gap: 8 },
+  cancelLink: { alignItems: 'center', paddingVertical: 8, marginBottom: 4 },
+  cancelLinkText: { color: '#c0392b', fontWeight: '600', fontSize: 13 },
 });

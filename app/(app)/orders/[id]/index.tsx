@@ -123,6 +123,12 @@ export default function OrderItemPickerScreen() {
     <View style={styles.container}>
       <View style={styles.headerActions}>
         <Button label="Hold / Park" variant="secondary" onPress={() => parkMutation.mutate()} style={{ flex: 1 }} />
+        <Button
+          label="Cancel Order"
+          variant="danger"
+          onPress={() => router.push(`/orders/${id}/cancel`)}
+          style={{ flex: 1 }}
+        />
       </View>
 
       <TextInput

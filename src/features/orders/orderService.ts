@@ -436,6 +436,58 @@ export async function recordPayment(orderId: string, input: RecordPaymentInput):
   }
 }
 
+export interface CancelOrderInput {
+  staffId: string;
+  reason: string;
+}
+
+/** Cancels an order that was never paid (still 'active' or 'parked') -- e.g. a table opened by
+ * mistake, or a customer who left before ordering. There was previously no way to release a
+ * table in this state at all: "Charge" is disabled with zero items, parking an order leaves the
+ * table occupied by design, and voidOrder only applies after payment -- so an abandoned dine-in
+ * order stuck its table "Occupied" forever with no UI path to clear it. Reuses the 'void' status
+ * (Reports already treats void orders as non-revenue) rather than a status not stated in schema.sql. */
+export async function cancelOrder(orderId: string, input: CancelOrderInput): Promise<void> {
+  const order = await db.query.orders.findFirst({ where: eq(orders.id, orderId) });
+  if (!order) throw new Error('Order not found');
+  if (order.status === 'paid' || order.status === 'void') {
+    throw new Error('Only an unpaid order can be cancelled -- use Void for a paid order.');
+  }
+
+  const items = await db.query.orderItems.findMany({
+    where: (oi, { and: andOp, eq: eqOp }) => andOp(eqOp(oi.orderId, orderId), eqOp(oi.isVoided, false)),
+  });
+  for (const item of items) {
+    await restoreIngredients(item.menuItemId, item.quantity);
+  }
+
+  await db
+    .update(orders)
+    .set({
+      status: 'void',
+      voidedAt: new Date(),
+      voidReason: input.reason,
+      voidedByStaffId: input.staffId,
+      updatedAt: new Date(),
+    })
+    .where(eq(orders.id, orderId));
+
+  if (order.tableId) {
+    await setTableStatus(order.tableId, 'free', null);
+  }
+
+  await logAudit({
+    restaurantId: order.restaurantId,
+    staffId: input.staffId,
+    action: 'cancel_order',
+    entityType: 'order',
+    entityId: orderId,
+    reason: input.reason,
+    before: { status: order.status },
+    after: { status: 'void' },
+  });
+}
+
 export interface VoidOrderInput {
   staffId: string;
   reason: string;

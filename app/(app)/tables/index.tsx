@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
-import { createTable, listTables, type DiningTable } from '@/features/tables/tableService';
-import { createOrder } from '@/features/orders/orderService';
+import { createTable, listTables, setTableStatus, type DiningTable } from '@/features/tables/tableService';
+import { createOrder, getOrder } from '@/features/orders/orderService';
 import { FormField } from '@/components/FormField';
 import { Button } from '@/components/Button';
 
@@ -49,12 +49,44 @@ export default function TablesScreen() {
     },
   });
 
-  function onTablePress(table: DiningTable) {
+  // A manual escape hatch for a table that's stuck non-free with no way to reach its order from
+  // the UI -- e.g. its order was removed outside the app (a direct DB delete, a bad sync), or an
+  // order/table desync from an interrupted write. Resets the table locally; if the pointed-to
+  // order still genuinely exists and is still open, staff can always re-occupy the table fresh
+  // and the old order remains reachable via Cancel/Void from wherever it's still linked.
+  const releaseTableMutation = useMutation({
+    mutationFn: (tableId: string) => setTableStatus(tableId, 'free', null),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tables', restaurantId] }),
+  });
+
+  function confirmRelease(table: DiningTable, message: string) {
+    Alert.alert(`Release ${table.name}?`, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Release', style: 'destructive', onPress: () => releaseTableMutation.mutate(table.id) },
+    ]);
+  }
+
+  async function onTablePress(table: DiningTable) {
     if (table.status === 'free') {
       openTableMutation.mutate(table);
-    } else if (table.currentOrderId) {
-      router.push(`/orders/${table.currentOrderId}`);
+      return;
     }
+    if (!table.currentOrderId) {
+      confirmRelease(
+        table,
+        'This table is marked Occupied but has no order attached to it anymore. Release it back to Free?',
+      );
+      return;
+    }
+    const order = await getOrder(table.currentOrderId);
+    if (!order || order.status === 'paid' || order.status === 'void') {
+      confirmRelease(
+        table,
+        "This table's order no longer exists or is already closed out, but the table itself never got freed. Release it back to Free?",
+      );
+      return;
+    }
+    router.push(`/orders/${table.currentOrderId}`);
   }
 
   return (
@@ -72,6 +104,10 @@ export default function TablesScreen() {
             <Pressable
               style={[styles.tableCard, { backgroundColor: status.bg }]}
               onPress={() => onTablePress(item)}
+              onLongPress={() =>
+                item.status !== 'free' &&
+                confirmRelease(item, `Force ${item.name} back to Free, regardless of any order on it?`)
+              }
             >
               <Text style={styles.tableName}>{item.name}</Text>
               <Text style={styles.tableStatus}>{status.label}</Text>
