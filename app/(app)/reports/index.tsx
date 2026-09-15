@@ -119,6 +119,12 @@ export default function ReportsScreen() {
       )}
 
       <Button label="Item-wise Sales" onPress={() => router.push({ pathname: '/reports/item-sales', params: { preset } })} style={styles.button} />
+      <Button
+        label="Daily Expense"
+        variant="secondary"
+        onPress={() => router.push('/reports/daily-expense')}
+        style={styles.button}
+      />
     </ScrollView>
   );
 }

@@ -1,10 +1,12 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
-import { inventoryItems, recipeIngredients } from '@/db/schema';
+import { inventoryItems, inventoryPurchases, recipeIngredients } from '@/db/schema';
 import { generateId } from '@/lib/id';
+import { round2 } from '@/features/tax/taxEngine';
 
 export type InventoryItem = typeof inventoryItems.$inferSelect;
 export type RecipeIngredient = typeof recipeIngredients.$inferSelect;
+export type InventoryPurchase = typeof inventoryPurchases.$inferSelect;
 
 /** Display-time defense-in-depth against floating-point artifacts (e.g. 9.400000000000002)
  * in the quantity — consumeIngredients rounds at write time, but this covers any row written
@@ -190,4 +192,127 @@ export async function consumeIngredients(menuItemId: string | null | undefined, 
 /** Inverse of consumeIngredients — restores quantityDelta servings' worth of ingredients. */
 export async function restoreIngredients(menuItemId: string | null | undefined, quantityDelta: number): Promise<void> {
   await consumeIngredients(menuItemId, -quantityDelta);
+}
+
+export interface RecordPurchaseInput {
+  restaurantId: string;
+  inventoryItemId: string;
+  quantity: number;
+  costPerUnit: number;
+  staffId: string;
+  /** Defaults to now — override for a purchase entered a day (or more) late, so it still counts
+   * against the day it actually happened rather than the day someone got around to logging it. */
+  purchasedAt?: Date;
+}
+
+/** Logs a restock as money spent (for the Daily Expense report) AND adds the quantity to the
+ * item's running stock, in one transaction — the two must never drift apart. This is the only
+ * supported way to increase stock with a cost attached; editing "Quantity in stock" directly in
+ * the item editor is for corrections/stocktakes and intentionally does not log an expense. Also
+ * updates the item's costPerUnit to this purchase's price, so the next restock/recipe costing
+ * defaults to the latest price paid rather than a stale one. */
+export async function recordPurchase(input: RecordPurchaseInput): Promise<void> {
+  const totalCost = round2(input.quantity * input.costPerUnit);
+  const purchasedAt = input.purchasedAt ?? new Date();
+  await db.transaction(async (tx) => {
+    await tx.insert(inventoryPurchases).values({
+      id: generateId(),
+      restaurantId: input.restaurantId,
+      inventoryItemId: input.inventoryItemId,
+      quantity: input.quantity,
+      costPerUnit: input.costPerUnit,
+      totalCost,
+      staffId: input.staffId,
+      purchasedAt,
+    });
+    await tx
+      .update(inventoryItems)
+      .set({
+        quantity: sql`ROUND(${inventoryItems.quantity} + ${input.quantity}, 3)`,
+        costPerUnit: input.costPerUnit,
+        updatedAt: new Date(),
+      })
+      .where(eq(inventoryItems.id, input.inventoryItemId));
+  });
+}
+
+export interface DailyExpenseDay {
+  /** YYYY-MM-DD, in local time. */
+  date: string;
+  total: number;
+}
+
+export interface DailyExpenseItem {
+  inventoryItemId: string;
+  name: string;
+  unit: string;
+  quantity: number;
+  total: number;
+}
+
+export interface DailyExpenseSummary {
+  totalSpent: number;
+  purchaseCount: number;
+  byDay: DailyExpenseDay[];
+  byItem: DailyExpenseItem[];
+}
+
+function localDateKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/** Powers Reports > Daily Expense: how much was actually spent restocking inventory in a date
+ * range (end exclusive, matching reportService.ts's DateRange convention), broken down by day
+ * and by item — distinct from a current stock valuation, this is real money spent on real dates. */
+export async function getDailyExpenseSummary(
+  restaurantId: string,
+  range: { start: Date; end: Date },
+): Promise<DailyExpenseSummary> {
+  const rows = await db.query.inventoryPurchases.findMany({
+    where: and(
+      eq(inventoryPurchases.restaurantId, restaurantId),
+      gte(inventoryPurchases.purchasedAt, range.start),
+      lt(inventoryPurchases.purchasedAt, range.end),
+    ),
+  });
+
+  const totalSpent = round2(rows.reduce((sum, r) => sum + r.totalCost, 0));
+
+  const byDayMap = new Map<string, number>();
+  for (const r of rows) {
+    const key = localDateKey(r.purchasedAt);
+    byDayMap.set(key, round2((byDayMap.get(key) ?? 0) + r.totalCost));
+  }
+  const byDay = [...byDayMap.entries()]
+    .map(([date, total]) => ({ date, total }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  const itemIds = [...new Set(rows.map((r) => r.inventoryItemId))];
+  const items = itemIds.length
+    ? await db.query.inventoryItems.findMany({ where: inArray(inventoryItems.id, itemIds) })
+    : [];
+  const itemById = new Map(items.map((i) => [i.id, i]));
+
+  const byItemMap = new Map<string, { quantity: number; total: number }>();
+  for (const r of rows) {
+    const existing = byItemMap.get(r.inventoryItemId) ?? { quantity: 0, total: 0 };
+    byItemMap.set(r.inventoryItemId, {
+      quantity: round2(existing.quantity + r.quantity),
+      total: round2(existing.total + r.totalCost),
+    });
+  }
+  const byItem = [...byItemMap.entries()]
+    .map(([inventoryItemId, agg]) => ({
+      inventoryItemId,
+      name: itemById.get(inventoryItemId)?.name ?? 'Unknown item',
+      unit: itemById.get(inventoryItemId)?.unit ?? '',
+      quantity: agg.quantity,
+      total: agg.total,
+    }))
+    .sort((a, b) => b.total - a.total);
+
+  return { totalSpent, purchaseCount: rows.length, byDay, byItem };
 }

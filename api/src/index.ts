@@ -122,6 +122,7 @@ const TABLE_MAP: Record<string, { table: string; conflictTarget: string }> = {
   comboDeals: { table: 'combo_deals', conflictTarget: 'id' },
   comboDealItems: { table: 'combo_deal_items', conflictTarget: 'id' },
   inventoryItems: { table: 'inventory_items', conflictTarget: 'id' },
+  inventoryPurchases: { table: 'inventory_purchases', conflictTarget: 'id' },
   recipeIngredients: { table: 'recipe_ingredients', conflictTarget: 'id' },
   diningTables: { table: 'dining_tables', conflictTarget: 'id' },
   orders: { table: 'orders', conflictTarget: 'id' },

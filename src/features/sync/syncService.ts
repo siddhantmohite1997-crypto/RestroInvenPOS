@@ -13,6 +13,7 @@ import {
   comboDeals,
   comboDealItems,
   inventoryItems,
+  inventoryPurchases,
   recipeIngredients,
   diningTables,
   orders,
@@ -335,6 +336,16 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
   });
   syncData.inventoryItems = filterChangedSince(
     inventoryItemRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+    lastSyncedAt,
+  );
+
+  const purchaseRows = await db.query.inventoryPurchases.findMany({
+    where: eq(inventoryPurchases.restaurantId, restaurantId),
+  });
+  // Append-only log, never updated after insert -- createdAt doubles as changedAt, same as
+  // auditLogs below.
+  syncData.inventoryPurchases = filterChangedSince(
+    purchaseRows.map((r) => ({ ...r, changedAt: r.createdAt })),
     lastSyncedAt,
   );
 

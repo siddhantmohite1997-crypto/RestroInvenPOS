@@ -5,6 +5,7 @@ export default function ReportsLayout() {
     <Stack>
       <Stack.Screen name="index" options={{ title: 'Reports' }} />
       <Stack.Screen name="item-sales" options={{ title: 'Item-wise Sales' }} />
+      <Stack.Screen name="daily-expense" options={{ title: 'Daily Expense' }} />
     </Stack>
   );
 }

@@ -78,6 +78,13 @@
       "when": 1788960023587,
       "tag": "0010_marvelous_banshee",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1789490922238,
+      "tag": "0011_tidy_mantis",
+      "breakpoints": true
     }
   ]
 }
