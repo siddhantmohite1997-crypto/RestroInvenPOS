@@ -306,12 +306,15 @@ app.post('/staff', async (req: Request, res: Response) => {
       return res.status(401).json({ error: auth.reason || 'Authentication failed' });
     }
 
-    // pin_hash is NOT NULL in the staff table. Omitting `pin` on an edit is normally fine --
-    // it means "keep the current hash" -- but only if a cloud row already exists to keep it
-    // from. If this staff member's first push never made it (offline at creation time, etc.),
-    // there's no existing row and no pin_hash to fall back to, so the upsert below would
-    // insert with a null pin_hash and crash on the NOT NULL constraint. Check first so that
-    // case surfaces as an actionable message instead of a raw Postgres error.
+    // pin_hash is NOT NULL in the staff table. Omitting `pin` on an edit is normally fine -- it
+    // means "keep the current hash" -- but Supabase's upsert() does NOT do a true partial merge
+    // on conflict: a column left out of the payload is written as NULL on the UPDATE path too,
+    // not "leave unchanged" (confirmed directly against Postgres -- this crashed even though a
+    // row already existed). So a pin-less edit of any existing staff member always crashed here,
+    // not just a never-synced one. Fix: when no pin is given, look up the existing row and do an
+    // explicit .update() that simply never mentions pin_hash, instead of .upsert() -- a real
+    // partial UPDATE, unlike upsert's all-or-nothing column list. Only fall through to insert
+    // (via upsert, pin_hash included) when a pin is actually given.
     if (!pin) {
       const { data: existingStaff } = await supabase
         .from('staff')
@@ -323,6 +326,16 @@ app.post('/staff', async (req: Request, res: Response) => {
           error: `${name} hasn't been synced to the cloud before -- enter their PIN once to finish setting them up.`,
         });
       }
+
+      const { error: updateError } = await supabase
+        .from('staff')
+        .update({ restaurant_id: restaurantId, name, role })
+        .eq('id', staffId);
+      if (updateError) {
+        console.error(`Error updating staff ${staffId}:`, updateError);
+        return res.status(500).json({ error: updateError.message });
+      }
+      return res.json({ success: true });
     }
 
     const upsertRow: Record<string, unknown> = {
@@ -330,10 +343,8 @@ app.post('/staff', async (req: Request, res: Response) => {
       restaurant_id: restaurantId,
       name,
       role,
+      pin_hash: crypto.createHash('sha256').update(pin).digest('hex'),
     };
-    if (pin) {
-      upsertRow.pin_hash = crypto.createHash('sha256').update(pin).digest('hex');
-    }
 
     const { error } = await supabase.from('staff').upsert(upsertRow, { onConflict: 'id' });
     if (error) {
