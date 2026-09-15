@@ -75,6 +75,10 @@ export default function AddItemModifierScreen() {
           </Text>
           {group.modifiers.map((m) => {
             const selected = (selections[group.id] ?? []).includes(m.id);
+            // Show what this option actually costs (base item price + its own delta), not just
+            // the bare delta -- "+0.00" / "+80.00" with no base-price context read as "free" /
+            // "only ₹80" instead of the real ₹120 / ₹200, which is what confused staff/customers.
+            const optionPrice = (itemQuery.data?.price ?? 0) + m.priceDelta;
             return (
               <Pressable
                 key={m.id}
@@ -83,8 +87,10 @@ export default function AddItemModifierScreen() {
               >
                 <Text style={[styles.optionText, selected && styles.optionTextSelected]}>{m.name}</Text>
                 <Text style={[styles.optionPrice, selected && styles.optionTextSelected]}>
-                  {m.priceDelta >= 0 ? '+' : ''}
-                  {m.priceDelta.toFixed(2)}
+                  ₹{optionPrice.toFixed(2)}
+                  {m.priceDelta !== 0
+                    ? ` (${m.priceDelta > 0 ? '+' : ''}₹${m.priceDelta.toFixed(2)})`
+                    : ''}
                 </Text>
               </Pressable>
             );
