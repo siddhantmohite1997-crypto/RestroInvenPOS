@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
@@ -123,6 +123,9 @@ export default function PurchaseEntryScreen() {
       queryClient.invalidateQueries({ queryKey: ['purchases', restaurantId] });
       queryClient.invalidateQueries({ queryKey: ['purchasesTotal', restaurantId] });
       router.back();
+    },
+    onError: (err) => {
+      Alert.alert('Save failed', err instanceof Error ? err.message : 'Could not save this purchase.');
     },
   });
 
