@@ -123,3 +123,114 @@ export async function recordSupplierPurchase(input: RecordSupplierPurchaseInput)
     return purchaseId;
   });
 }
+
+export interface PurchaseListRow {
+  id: string;
+  supplierName: string | null;
+  purchasedAt: Date;
+  totalCost: number;
+  itemCount: number;
+}
+
+/** Purchase bills in a date range (end exclusive, matching reportService.ts's DateRange
+ * convention), newest first -- powers the Purchase Report list screen. */
+export async function listPurchases(
+  restaurantId: string,
+  range: { start: Date; end: Date },
+): Promise<PurchaseListRow[]> {
+  const rows = await db.query.purchases.findMany({
+    where: (p, { and: andOp, eq: eqOp, gte, lt }) =>
+      andOp(eqOp(p.restaurantId, restaurantId), gte(p.purchasedAt, range.start), lt(p.purchasedAt, range.end)),
+    orderBy: (p, { desc }) => desc(p.purchasedAt),
+  });
+  if (rows.length === 0) return [];
+
+  const supplierIds = [...new Set(rows.map((r) => r.supplierId).filter((id): id is string => !!id))];
+  const supplierRows = supplierIds.length
+    ? await db.query.suppliers.findMany({ where: (s, { inArray }) => inArray(s.id, supplierIds) })
+    : [];
+  const supplierById = new Map(supplierRows.map((s) => [s.id, s]));
+
+  const purchaseIds = rows.map((r) => r.id);
+  const lineRows = await db.query.inventoryPurchases.findMany({
+    where: (ip, { inArray }) => inArray(ip.purchaseId, purchaseIds),
+  });
+  const countByPurchase = new Map<string, number>();
+  for (const line of lineRows) {
+    if (!line.purchaseId) continue;
+    countByPurchase.set(line.purchaseId, (countByPurchase.get(line.purchaseId) ?? 0) + 1);
+  }
+
+  return rows.map((r) => ({
+    id: r.id,
+    supplierName: r.supplierId ? (supplierById.get(r.supplierId)?.name ?? null) : null,
+    purchasedAt: r.purchasedAt,
+    totalCost: r.totalCost,
+    itemCount: countByPurchase.get(r.id) ?? 0,
+  }));
+}
+
+export interface PurchaseDetailLine {
+  id: string;
+  itemName: string;
+  unit: string;
+  quantity: number;
+  costPerUnit: number;
+  totalCost: number;
+}
+
+export interface PurchaseDetail {
+  id: string;
+  supplierName: string | null;
+  purchasedAt: Date;
+  totalCost: number;
+  lines: PurchaseDetailLine[];
+}
+
+/** One bill's line items -- powers the Purchase Report detail view reached by tapping a row in
+ * the list from listPurchases(). Returns null if the id doesn't exist (deep-link to a stale id,
+ * or the restaurant was reset). */
+export async function getPurchaseDetail(purchaseId: string): Promise<PurchaseDetail | null> {
+  const purchase = await db.query.purchases.findFirst({ where: eq(purchases.id, purchaseId) });
+  if (!purchase) return null;
+
+  const supplier = purchase.supplierId
+    ? await db.query.suppliers.findFirst({ where: eq(suppliers.id, purchase.supplierId) })
+    : null;
+
+  const lineRows = await db.query.inventoryPurchases.findMany({
+    where: eq(inventoryPurchases.purchaseId, purchaseId),
+  });
+  const itemIds = [...new Set(lineRows.map((l) => l.inventoryItemId))];
+  const itemRows = itemIds.length
+    ? await db.query.inventoryItems.findMany({ where: (i, { inArray }) => inArray(i.id, itemIds) })
+    : [];
+  const itemById = new Map(itemRows.map((i) => [i.id, i]));
+
+  return {
+    id: purchase.id,
+    supplierName: supplier?.name ?? null,
+    purchasedAt: purchase.purchasedAt,
+    totalCost: purchase.totalCost,
+    lines: lineRows.map((l) => ({
+      id: l.id,
+      itemName: itemById.get(l.inventoryItemId)?.name ?? 'Unknown item',
+      unit: itemById.get(l.inventoryItemId)?.unit ?? '',
+      quantity: l.quantity,
+      costPerUnit: l.costPerUnit,
+      totalCost: l.totalCost,
+    })),
+  };
+}
+
+/** A single sum over a date range -- powers Sales Reports home's "Purchases" card and, combined
+ * with Net Sales, calculateNetProfit(). Sums purchases.total_cost directly (the bill-level
+ * total) rather than inventory_purchases lines, so this is correct regardless of whether every
+ * line item's purchasedAt exactly matches its parent bill's purchasedAt (they always will in
+ * practice, but this is the more direct query for "what did bills in this range cost"). */
+export async function getPurchasesTotal(restaurantId: string, range: { start: Date; end: Date }): Promise<number> {
+  const rows = await db.query.purchases.findMany({
+    where: and(eq(purchases.restaurantId, restaurantId), sql`${purchases.purchasedAt} >= ${range.start.getTime()}`, sql`${purchases.purchasedAt} < ${range.end.getTime()}`),
+  });
+  return round2(rows.reduce((sum, r) => sum + r.totalCost, 0));
+}
