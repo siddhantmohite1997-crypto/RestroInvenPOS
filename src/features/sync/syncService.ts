@@ -22,6 +22,8 @@ import {
   discounts,
   payments,
   auditLogs,
+  suppliers,
+  purchases,
 } from '@/db/schema';
 import { getLastSyncedAt, setLastSyncedAt } from './syncConfig';
 import { filterChangedSince } from './syncDiff';
@@ -330,6 +332,24 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
     lastSyncedAt === null
       ? menuItemModifierGroupRows
       : menuItemModifierGroupRows.filter((r) => r.createdAt.getTime() > lastSyncedAt.getTime());
+
+  const supplierRows = await db.query.suppliers.findMany({
+    where: eq(suppliers.restaurantId, restaurantId),
+  });
+  syncData.suppliers = filterChangedSince(
+    supplierRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+    lastSyncedAt,
+  );
+
+  const purchaseHeaderRows = await db.query.purchases.findMany({
+    where: eq(purchases.restaurantId, restaurantId),
+  });
+  // Append-only header, never updated after insert -- createdAt doubles as changedAt, same as
+  // inventoryPurchases below and auditLogs elsewhere in this file.
+  syncData.purchases = filterChangedSince(
+    purchaseHeaderRows.map((r) => ({ ...r, changedAt: r.createdAt })),
+    lastSyncedAt,
+  );
 
   const inventoryItemRows = await db.query.inventoryItems.findMany({
     where: eq(inventoryItems.restaurantId, restaurantId),

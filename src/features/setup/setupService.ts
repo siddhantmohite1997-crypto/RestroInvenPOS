@@ -16,6 +16,8 @@ import {
   comboDealItems,
   inventoryItems,
   inventoryPurchases,
+  suppliers,
+  purchases,
   recipeIngredients,
   diningTables,
   orders,
@@ -160,6 +162,8 @@ export async function pairWithRestaurant(input: PairInput): Promise<PairResult> 
  * restore inserts must walk the same order or a child row's FK target won't exist yet. */
 const RESTORE_TABLE_ORDER: { key: string; table: SQLiteTable }[] = [
   { key: 'categories', table: categories },
+  { key: 'suppliers', table: suppliers },
+  { key: 'purchases', table: purchases },
   { key: 'taxRules', table: taxRules },
   { key: 'taxComponents', table: taxComponents },
   { key: 'menuItems', table: menuItems },

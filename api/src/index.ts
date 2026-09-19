@@ -109,6 +109,8 @@ async function verifyPinAuth(
 // insert must walk this same order (parents before children) for the same reason.
 const TABLE_MAP: Record<string, { table: string; conflictTarget: string }> = {
   restaurants: { table: 'restaurants', conflictTarget: 'id' },
+  suppliers: { table: 'suppliers', conflictTarget: 'id' },
+  purchases: { table: 'purchases', conflictTarget: 'id' },
   categories: { table: 'categories', conflictTarget: 'id' },
   taxRules: { table: 'tax_rules', conflictTarget: 'id' },
   taxComponents: { table: 'tax_components', conflictTarget: 'id' },
