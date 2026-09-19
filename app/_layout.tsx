@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, StyleSheet, Text, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { useMigrations } from 'drizzle-orm/expo-sqlite/migrator';
 import { StatusBar } from 'expo-status-bar';
@@ -53,7 +53,9 @@ export default function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
       <StatusBar style="auto" />
-      <Stack screenOptions={{ headerShown: false }} />
+      <KeyboardAvoidingView style={styles.flex} behavior="height">
+        <Stack screenOptions={{ headerShown: false }} />
+      </KeyboardAvoidingView>
     </QueryClientProvider>
   );
 }
@@ -61,4 +63,5 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   error: { color: 'red', textAlign: 'center' },
+  flex: { flex: 1 },
 });
