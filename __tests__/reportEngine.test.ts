@@ -1,4 +1,4 @@
-import { summarizeItemSales, summarizeSales } from '@/features/reports/reportEngine';
+import { calculateNetProfit, summarizeItemSales, summarizeSales } from '@/features/reports/reportEngine';
 
 describe('summarizeSales', () => {
   it('sums gross/net sales, discounts, and tax across paid orders only', () => {
@@ -77,5 +77,23 @@ describe('summarizeItemSales', () => {
 
   it('returns an empty list for no items', () => {
     expect(summarizeItemSales([])).toEqual([]);
+  });
+});
+
+describe('calculateNetProfit', () => {
+  it('subtracts total purchases from net sales', () => {
+    expect(calculateNetProfit(1000, 400)).toBe(600);
+  });
+
+  it('returns net sales unchanged when there were no purchases in range', () => {
+    expect(calculateNetProfit(1000, 0)).toBe(1000);
+  });
+
+  it('can go negative when purchases exceed sales', () => {
+    expect(calculateNetProfit(100, 500)).toBe(-400);
+  });
+
+  it('rounds to 2 decimal places, matching every other money calculation in this codebase', () => {
+    expect(calculateNetProfit(100.005, 0.001)).toBe(100.0);
   });
 });

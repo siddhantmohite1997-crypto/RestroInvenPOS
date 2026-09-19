@@ -88,3 +88,12 @@ export function summarizeItemSales(items: ItemSaleInput[]): ItemSaleSummary[] {
     .map(([name, totals]) => ({ name, ...totals }))
     .sort((a, b) => b.revenue - a.revenue);
 }
+
+/** Net Sales minus total purchase spend over the same date range -- the one figure Sales
+ * Reports home shows alongside Gross/Net Sales once Purchases is folded in. Deliberately a
+ * one-line pure function (not folded into summarizeSales) since its two inputs come from two
+ * unrelated queries (orders/payments vs. inventory_purchases) that the caller already has to
+ * run separately. */
+export function calculateNetProfit(netSales: number, purchasesTotal: number): number {
+  return round2(netSales - purchasesTotal);
+}
