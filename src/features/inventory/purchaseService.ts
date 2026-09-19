@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { suppliers, purchases, inventoryItems, inventoryPurchases } from '@/db/schema';
 import { generateId } from '@/lib/id';
@@ -13,7 +13,7 @@ export async function getSupplierSuggestions(restaurantId: string, query: string
   const trimmed = query.trim();
   if (!trimmed) return [];
   const all = await db.query.suppliers.findMany({
-    where: eq(suppliers.restaurantId, restaurantId),
+    where: and(eq(suppliers.restaurantId, restaurantId), eq(suppliers.isActive, true)),
     orderBy: (s, { desc }) => desc(s.updatedAt),
   });
   const q = trimmed.toLowerCase();
@@ -236,4 +236,55 @@ export async function getPurchasesTotal(restaurantId: string, range: { start: Da
       andOp(eqOp(p.restaurantId, restaurantId), gte(p.purchasedAt, range.start), lt(p.purchasedAt, range.end)),
   });
   return round2(rows.reduce((sum, r) => sum + r.totalCost, 0));
+}
+
+export interface VendorInput {
+  restaurantId: string;
+  name: string;
+  phone?: string;
+  gstNumber?: string;
+}
+
+/** Active vendors, alphabetical -- powers the Vendors list screen. Unlike
+ * getSupplierSuggestions (autocomplete, capped at 5, substring-matched), this returns every
+ * active vendor for full CRUD browsing. */
+export async function listVendors(restaurantId: string): Promise<Supplier[]> {
+  return db.query.suppliers.findMany({
+    where: and(eq(suppliers.restaurantId, restaurantId), eq(suppliers.isActive, true)),
+    orderBy: (s, { asc }) => asc(s.name),
+  });
+}
+
+export async function getVendor(id: string): Promise<Supplier | null> {
+  const row = await db.query.suppliers.findFirst({ where: eq(suppliers.id, id) });
+  return row ?? null;
+}
+
+export async function createVendor(input: VendorInput): Promise<string> {
+  const id = generateId();
+  await db.insert(suppliers).values({
+    id,
+    restaurantId: input.restaurantId,
+    name: input.name,
+    phone: input.phone || null,
+    gstNumber: input.gstNumber || null,
+  });
+  return id;
+}
+
+export async function updateVendor(
+  id: string,
+  input: Partial<Pick<VendorInput, 'name' | 'phone' | 'gstNumber'>>,
+): Promise<void> {
+  await db
+    .update(suppliers)
+    .set({ ...input, updatedAt: new Date() })
+    .where(eq(suppliers.id, id));
+}
+
+/** Soft delete -- a vendor with past purchase bills keeps its row (those bills still resolve its
+ * name correctly via listPurchases/getPurchaseDetail, which join suppliers by id regardless of
+ * isActive), it just stops appearing in the Vendors list or the Purchase entry autocomplete. */
+export async function deleteVendor(id: string): Promise<void> {
+  await db.update(suppliers).set({ isActive: false, updatedAt: new Date() }).where(eq(suppliers.id, id));
 }
