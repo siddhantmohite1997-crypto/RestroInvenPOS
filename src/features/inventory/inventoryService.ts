@@ -194,48 +194,6 @@ export async function restoreIngredients(menuItemId: string | null | undefined, 
   await consumeIngredients(menuItemId, -quantityDelta);
 }
 
-export interface RecordPurchaseInput {
-  restaurantId: string;
-  inventoryItemId: string;
-  quantity: number;
-  costPerUnit: number;
-  staffId: string;
-  /** Defaults to now — override for a purchase entered a day (or more) late, so it still counts
-   * against the day it actually happened rather than the day someone got around to logging it. */
-  purchasedAt?: Date;
-}
-
-/** Logs a restock as money spent (for the Daily Expense report) AND adds the quantity to the
- * item's running stock, in one transaction — the two must never drift apart. This is the only
- * supported way to increase stock with a cost attached; editing "Quantity in stock" directly in
- * the item editor is for corrections/stocktakes and intentionally does not log an expense. Also
- * updates the item's costPerUnit to this purchase's price, so the next restock/recipe costing
- * defaults to the latest price paid rather than a stale one. */
-export async function recordPurchase(input: RecordPurchaseInput): Promise<void> {
-  const totalCost = round2(input.quantity * input.costPerUnit);
-  const purchasedAt = input.purchasedAt ?? new Date();
-  await db.transaction(async (tx) => {
-    await tx.insert(inventoryPurchases).values({
-      id: generateId(),
-      restaurantId: input.restaurantId,
-      inventoryItemId: input.inventoryItemId,
-      quantity: input.quantity,
-      costPerUnit: input.costPerUnit,
-      totalCost,
-      staffId: input.staffId,
-      purchasedAt,
-    });
-    await tx
-      .update(inventoryItems)
-      .set({
-        quantity: sql`ROUND(${inventoryItems.quantity} + ${input.quantity}, 3)`,
-        costPerUnit: input.costPerUnit,
-        updatedAt: new Date(),
-      })
-      .where(eq(inventoryItems.id, input.inventoryItemId));
-  });
-}
-
 export interface DailyExpenseDay {
   /** YYYY-MM-DD, in local time. */
   date: string;

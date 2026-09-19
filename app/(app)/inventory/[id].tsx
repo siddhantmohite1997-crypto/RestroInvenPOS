@@ -10,10 +10,8 @@ import {
   formatQuantity,
   getInventoryItem,
   listInventoryItems,
-  recordPurchase,
   updateInventoryItem,
 } from '@/features/inventory/inventoryService';
-import { round2 } from '@/features/tax/taxEngine';
 import { FormField } from '@/components/FormField';
 import { UnitPicker } from '@/components/UnitPicker';
 import { CategoryPicker } from '@/components/CategoryPicker';
@@ -33,9 +31,6 @@ export default function InventoryItemEditorScreen() {
   const [quantity, setQuantity] = useState('');
   const [lowStockThreshold, setLowStockThreshold] = useState('');
   const [costPerUnit, setCostPerUnit] = useState('');
-
-  const [restockQuantity, setRestockQuantity] = useState('');
-  const [restockCost, setRestockCost] = useState('');
 
   const itemQuery = useQuery({
     queryKey: ['inventoryItem', id],
@@ -73,9 +68,6 @@ export default function InventoryItemEditorScreen() {
     setQuantity(formatQuantity(item.quantity));
     setLowStockThreshold(item.lowStockThreshold != null ? String(item.lowStockThreshold) : '');
     setCostPerUnit(item.costPerUnit != null ? String(item.costPerUnit) : '');
-    // Restocking the same item again is the common case -- default to what was last paid so
-    // staff usually just needs to confirm the quantity, not retype a price every time.
-    if (item.costPerUnit != null) setRestockCost((prev) => prev || String(item.costPerUnit));
   }, [itemQuery.data]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
@@ -115,27 +107,7 @@ export default function InventoryItemEditorScreen() {
     },
   });
 
-  const restockMutation = useMutation({
-    mutationFn: () =>
-      recordPurchase({
-        restaurantId,
-        inventoryItemId: id,
-        quantity: parseFloat(restockQuantity) || 0,
-        costPerUnit: parseFloat(restockCost) || 0,
-        staffId: currentUser.id,
-      }),
-    onSuccess: () => {
-      invalidate();
-      // Broad prefix match -- clears every date-range variant of the Daily Expense query
-      // without this screen needing to know which range(s) are currently cached.
-      queryClient.invalidateQueries({ queryKey: ['dailyExpense', restaurantId] });
-      setRestockQuantity('');
-    },
-  });
-
   const canSave = name.trim().length > 0 && unit.trim().length > 0;
-  const canRestock = (parseFloat(restockQuantity) || 0) > 0 && (parseFloat(restockCost) || 0) > 0;
-  const restockTotal = round2((parseFloat(restockQuantity) || 0) * (parseFloat(restockCost) || 0));
 
   return (
     <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
@@ -185,37 +157,6 @@ export default function InventoryItemEditorScreen() {
       {!isNew && (
         <Button label="Delete item" variant="danger" onPress={() => deleteMutation.mutate()} style={styles.deleteButton} />
       )}
-
-      {!isNew && (
-        <View style={styles.restockSection}>
-          <Text style={styles.restockTitle}>Record restock</Text>
-          <Text style={styles.restockHint}>
-            Logs this as money spent (for the Daily Expense report) and adds it to stock -- unlike
-            editing "Quantity in stock" above, which is for corrections and doesn't count as an expense.
-          </Text>
-          <FormField
-            label={`Quantity purchased (${unit || 'units'})`}
-            value={restockQuantity}
-            onChangeText={setRestockQuantity}
-            keyboardType="decimal-pad"
-            placeholder="0"
-          />
-          <FormField
-            label="Cost per unit"
-            value={restockCost}
-            onChangeText={setRestockCost}
-            keyboardType="decimal-pad"
-            placeholder="0.00"
-          />
-          {canRestock && <Text style={styles.restockTotal}>Total: ₹{restockTotal.toFixed(2)}</Text>}
-          <Button
-            label={restockMutation.isPending ? 'Recording…' : 'Record Restock'}
-            onPress={() => restockMutation.mutate()}
-            disabled={!canRestock || restockMutation.isPending}
-            style={styles.restockButton}
-          />
-        </View>
-      )}
     </ScrollView>
   );
 }
@@ -241,14 +182,4 @@ const styles = StyleSheet.create({
   },
   suggestionName: { fontSize: 15, fontWeight: '600', color: '#111' },
   suggestionMeta: { fontSize: 12, color: '#666', marginTop: 2 },
-  restockSection: {
-    marginTop: 28,
-    paddingTop: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-  },
-  restockTitle: { fontSize: 16, fontWeight: '700', marginBottom: 4 },
-  restockHint: { fontSize: 12, color: '#888', marginBottom: 14, lineHeight: 17 },
-  restockTotal: { fontSize: 14, fontWeight: '600', color: '#2563eb', marginBottom: 10, marginTop: -6 },
-  restockButton: {},
 });

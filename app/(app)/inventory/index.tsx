@@ -73,15 +73,7 @@ export default function InventoryScreen() {
         }}
       />
 
-      <View style={styles.footerRow}>
-        <Button
-          label="+ Add Item"
-          variant="secondary"
-          onPress={() => router.push('/inventory/new')}
-          style={{ flex: 1 }}
-        />
-        <Button label="+ Record Purchase" onPress={() => router.push('/inventory/purchase')} style={{ flex: 1 }} />
-      </View>
+      <Button label="+ Add Item" onPress={() => router.push('/inventory/new')} style={styles.addItemButton} />
     </View>
   );
 }
@@ -110,5 +102,5 @@ const styles = StyleSheet.create({
   lowStockBadge: { backgroundColor: '#fde8e8', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
   lowStockBadgeText: { color: '#c0392b', fontSize: 12, fontWeight: '600' },
   empty: { textAlign: 'center', color: '#999', marginTop: 40 },
-  footerRow: { position: 'absolute', bottom: 16, left: 16, right: 16, flexDirection: 'row', gap: 8 },
+  addItemButton: { position: 'absolute', bottom: 16, left: 16, right: 16 },
 });
