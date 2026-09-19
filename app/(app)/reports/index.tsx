@@ -125,6 +125,12 @@ export default function ReportsScreen() {
         onPress={() => router.push('/reports/daily-expense')}
         style={styles.button}
       />
+      <Button
+        label="Purchase Report"
+        variant="secondary"
+        onPress={() => router.push('/reports/purchases')}
+        style={styles.button}
+      />
     </ScrollView>
   );
 }

@@ -6,6 +6,8 @@ export default function ReportsLayout() {
       <Stack.Screen name="index" options={{ title: 'Reports' }} />
       <Stack.Screen name="item-sales" options={{ title: 'Item-wise Sales' }} />
       <Stack.Screen name="daily-expense" options={{ title: 'Daily Expense' }} />
+      <Stack.Screen name="purchases/index" options={{ title: 'Purchase Report' }} />
+      <Stack.Screen name="purchases/[id]" options={{ title: 'Purchase Detail' }} />
     </Stack>
   );
 }
