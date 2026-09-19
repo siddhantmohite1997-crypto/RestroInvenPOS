@@ -123,7 +123,6 @@ export default function PurchaseEntryScreen() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventoryItems', restaurantId] });
-      queryClient.invalidateQueries({ queryKey: ['dailyExpense', restaurantId] });
       queryClient.invalidateQueries({ queryKey: ['purchases', restaurantId] });
       queryClient.invalidateQueries({ queryKey: ['purchasesTotal', restaurantId] });
       router.back();

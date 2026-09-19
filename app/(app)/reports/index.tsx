@@ -155,12 +155,6 @@ export default function ReportsScreen() {
         style={styles.button}
       />
       <Button
-        label="Daily Expense"
-        variant="secondary"
-        onPress={() => router.push('/reports/daily-expense')}
-        style={styles.button}
-      />
-      <Button
         label="Purchase Report"
         variant="secondary"
         onPress={() => router.push('/reports/purchases')}
