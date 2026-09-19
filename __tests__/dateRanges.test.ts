@@ -61,3 +61,34 @@ describe('thisMonth', () => {
     expect(localDateString(range.end)).toBe('2027-01-01');
   });
 });
+
+import { monthsAgo, monthLabel } from '@/features/reports/dateRanges';
+
+describe('monthsAgo', () => {
+  it('with n=0 matches thisMonth', () => {
+    const now = new Date('2026-08-12T15:30:00');
+    expect(monthsAgo(0, now)).toEqual(thisMonth(now));
+  });
+
+  it('goes back one calendar month', () => {
+    const range = monthsAgo(1, new Date('2026-08-12T15:30:00'));
+    expect(localDateString(range.start)).toBe('2026-07-01');
+    expect(localDateString(range.end)).toBe('2026-08-01');
+  });
+
+  it('crosses a year boundary going back', () => {
+    const range = monthsAgo(2, new Date('2027-01-15T00:00:00'));
+    expect(localDateString(range.start)).toBe('2026-11-01');
+    expect(localDateString(range.end)).toBe('2026-12-01');
+  });
+});
+
+describe('monthLabel', () => {
+  it('formats the current month', () => {
+    expect(monthLabel(0, new Date('2026-08-12T15:30:00'))).toBe('Aug 2026');
+  });
+
+  it('formats a month several back, crossing a year boundary', () => {
+    expect(monthLabel(3, new Date('2026-01-15T00:00:00'))).toBe('Oct 2025');
+  });
+});
