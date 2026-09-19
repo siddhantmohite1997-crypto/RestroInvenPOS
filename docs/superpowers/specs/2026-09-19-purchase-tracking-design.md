@@ -14,10 +14,26 @@ This spec covers three additions, all building on the existing `inventory_purcha
 ## Non-goals (explicitly out of scope for this pass)
 
 - Editing or voiding a saved purchase bill. A data-entry mistake is corrected the same way a stocktake correction is today: adjust the inventory item's quantity directly, or log a follow-up purchase. Revisit only if this proves to be a real pain point in practice.
-- A dedicated suppliers table, supplier contact info, or per-supplier reporting. Supplier is a plain text field with autocomplete sourced from previously-typed values — same lightweight pattern as the existing item-name suggestions.
+- A standalone "Suppliers" management screen (editing a supplier's phone/GST after the fact, viewing all bills from one supplier, deactivating one). A real `suppliers` table is now part of this design (see below) specifically so this is cheap to add *later* without a data migration — but no such screen ships in this pass.
+- Any per-supplier reporting (spend-by-supplier breakdowns, outstanding balance, payment terms/ledger). That's a meaningfully bigger accounts-payable-shaped feature; nothing so far suggests it's needed yet.
 - Any change to who can see the Reports tab. It stays Owner-only, exactly as today. Only the *entry* screen for logging a purchase is opened up to Captain.
 
 ## Data model
+
+### New table: `suppliers`
+
+A light record, not a vendor-management module — just enough to give a supplier a stable identity across bills and to capture the two fields worth having from day one (phone, for lookup; GST number, since retrofitting it onto already-logged bills for tax/accounting purposes later is far more annoying than capturing it now):
+
+```
+suppliers
+  id              TEXT PRIMARY KEY
+  restaurant_id   TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
+  name            TEXT NOT NULL
+  phone           TEXT               -- nullable
+  gst_number      TEXT               -- nullable
+  created_at      TIMESTAMP DEFAULT NOW()
+  updated_at      TIMESTAMP DEFAULT NOW()
+```
 
 ### New table: `purchases` (the bill header)
 
@@ -27,7 +43,7 @@ Local (Drizzle, `src/db/schema/inventory.ts`) and Supabase (new migration), matc
 purchases
   id              TEXT PRIMARY KEY
   restaurant_id   TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
-  supplier_name   TEXT               -- nullable; free text
+  supplier_id     TEXT REFERENCES suppliers(id)     -- nullable; not every purchase has a named supplier (e.g. a cash market run)
   staff_id        TEXT NOT NULL      -- who logged it
   purchased_at    TIMESTAMP NOT NULL DEFAULT NOW()  -- date of the bill
   total_cost      NUMERIC(10,2) NOT NULL            -- sum of its line items, denormalized for the Purchase Report list
@@ -42,15 +58,15 @@ ALTER TABLE inventory_purchases ADD COLUMN purchase_id TEXT REFERENCES purchases
 
 Nullable and additive — every restock already logged via the existing single-item "Record Restock" flow keeps `purchase_id = NULL` (not part of any bill, which is accurate). A new multi-line purchase writes one `purchases` row plus N `inventory_purchases` rows all sharing that `purchase_id`. Daily Expense's queries are untouched — they sum/group the flat `inventory_purchases` log regardless of `purchase_id`.
 
-### Supplier autocomplete
+### Supplier match-or-create
 
-No new table. Query `SELECT DISTINCT supplier_name FROM purchases WHERE restaurant_id = ? AND supplier_name IS NOT NULL ORDER BY ...` (most-recently-used first is a reasonable default), same shape as the existing inventory-item-name-suggestion query.
+Same shape as the existing inventory-item-name-match logic: typing in the supplier field searches `suppliers WHERE restaurant_id = ? AND name ILIKE '%query%'` (most-recently-used first is a reasonable tiebreaker). Picking a suggestion sets `supplier_id` to that existing row. Typing a name that doesn't match anything keeps it as a "new supplier" — same pattern as a new inventory-item line — and surfaces two optional inline fields (Phone, GST number) so they can be captured at the moment the supplier is first entered, not retrofitted later. Saving the purchase creates the `suppliers` row first (name + whatever of phone/GST was filled in), then references its id from `purchases.supplier_id`.
 
 ## New service functions (`src/features/inventory/inventoryService.ts` or a new `purchaseService.ts`)
 
-- `getSupplierSuggestions(restaurantId, query)` — distinct supplier names matching a search string, capped (mirrors the existing item-name-match logic in the Inventory create screen).
-- `recordSupplierPurchase(input)` — one transaction: for each line, resolve an inventory item (match existing by id, or create a new one first via `createInventoryItem`), insert one `inventory_purchases` row with the shared new `purchase_id`, and bump that item's stock/costPerUnit — reusing the same per-line update logic `recordPurchase()` already has, just looped and wrapped in one header insert.
-- `listPurchases(restaurantId, range)` — purchase bills in a date range, for the Purchase Report list (id, supplier_name, purchased_at, total_cost, item count).
+- `getSupplierSuggestions(restaurantId, query)` — suppliers matching a search string, capped (mirrors the existing item-name-match logic in the Inventory create screen).
+- `recordSupplierPurchase(input)` — one transaction: resolve the supplier (match existing by id, or create a new `suppliers` row first from name + optional phone/GST), then for each line resolve an inventory item (match existing by id, or create a new one first via `createInventoryItem`), insert one `inventory_purchases` row with the shared new `purchase_id`, and bump that item's stock/costPerUnit — reusing the same per-line update logic `recordPurchase()` already has, just looped and wrapped in one header insert.
+- `listPurchases(restaurantId, range)` — purchase bills in a date range, for the Purchase Report list (id, supplier name, purchased_at, total_cost, item count) — joins `suppliers` for the display name.
 - `getPurchaseDetail(purchaseId)` — one bill's line items, for the Purchase Report detail view.
 - `getPurchasesTotal(restaurantId, range)` — a single sum, for the new Sales-Reports-home "Purchases" card and the Net Profit calculation (`Net Sales − this`).
 
@@ -60,7 +76,7 @@ No new table. Query `SELECT DISTINCT supplier_name FROM purchases WHERE restaura
 
 Reached from a new "+ Record Purchase" button on the Inventory list screen (`app/(app)/inventory/index.tsx`), next to the existing "+ Add Item" — Inventory is already shared by Owner and Captain, so no new tab or permission plumbing is needed.
 
-- Supplier field: autocomplete as you type (reuses the same suggestion-row pattern as the existing item-name suggestions)
+- Supplier field: autocomplete as you type against existing suppliers; picking a match locks in that supplier, typing a new name reveals optional Phone and GST number fields inline (see "Supplier match-or-create" above)
 - Purchase date: defaults to today, editable (backdating a bill entered a day late is the same reasoning `recordPurchase()`'s `purchasedAt` already supports — see its doc comment)
 - Repeatable line rows: item name (autocomplete against existing inventory items; picking a match locks in that item's unit; not matching keeps it as a "new item" line requiring a unit, with category optional — same requiredness as the standalone Inventory "+ Add Item" screen today, not stricter), quantity, cost per unit
 - Running total footer
@@ -76,11 +92,11 @@ Two new cards in the existing grid: **Purchases** (`getPurchasesTotal` for the s
 
 ## Sync / API wiring
 
-`purchases` is added to the API's `TABLE_MAP` (`api/src/index.ts`), the client's sync push (`src/features/sync/syncService.ts`), and the client-side restore mirror (`src/features/setup/setupService.ts`'s `RESTORE_TABLE_ORDER`) — positioned after `restaurants` and before `inventoryPurchases` (parent-before-child, since `inventory_purchases.purchase_id` now references it). This is the exact same three-place wiring `inventoryPurchases` itself went through when it was added; no new pattern.
+`suppliers` and `purchases` are both added to the API's `TABLE_MAP` (`api/src/index.ts`), the client's sync push (`src/features/sync/syncService.ts`), and the client-side restore mirror (`src/features/setup/setupService.ts`'s `RESTORE_TABLE_ORDER`) — positioned after `restaurants`, `suppliers` before `purchases`, both before `inventoryPurchases` (parent-before-child all the way down: restaurants → suppliers → purchases → inventoryPurchases, since `purchases.supplier_id` and `inventory_purchases.purchase_id` both reference something earlier in that chain). This is the exact same three-place wiring `inventoryPurchases` itself went through when it was added; no new pattern, just two more entries in each of the three places.
 
-A corresponding Supabase migration (`supabase/migrations/011_purchases.sql`) creates the `purchases` table and adds the `purchase_id` column to `inventory_purchases` — this one needs to be run against the live database the same way `010_inventory_purchases.sql` was, before the API change referencing it goes live.
+A corresponding Supabase migration (`supabase/migrations/011_purchases.sql`) creates both the `suppliers` and `purchases` tables and adds the `purchase_id` column to `inventory_purchases` — this one needs to be run against the live database the same way `010_inventory_purchases.sql` was, before the API change referencing it goes live.
 
 ## Testing
 
 - Unit tests for the profit math (`netSales - purchasesTotal`, including a zero-purchases-in-range case) alongside the existing `reportEngine`/`taxEngine` test style.
-- Manual verification: log a multi-item purchase with one existing item and one brand-new item, confirm both the existing item's stock increases and the new item appears in Inventory; confirm the bill shows up in Purchase Report with correct line items; confirm Sales Reports home's Purchases/Net Profit cards reflect it for the right date range and not others.
+- Manual verification: log a multi-item purchase with one existing item and one brand-new item, from a brand-new supplier (with phone + GST filled in), confirm the existing item's stock increases, the new item appears in Inventory, and the new supplier is saved with its details; log a second purchase picking that same supplier from suggestions and confirm it reuses the existing supplier row rather than creating a duplicate; confirm the bill shows up in Purchase Report with correct supplier name and line items; confirm Sales Reports home's Purchases/Net Profit cards reflect it for the right date range and not others.
