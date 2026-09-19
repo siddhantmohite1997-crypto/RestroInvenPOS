@@ -92,6 +92,13 @@
       "when": 1789832920236,
       "tag": "0012_chubby_warbound",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1789850043580,
+      "tag": "0013_third_kid_colt",
+      "breakpoints": true
     }
   ]
 }
