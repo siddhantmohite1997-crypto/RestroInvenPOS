@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useAuthStore } from '@/store/authStore';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
 import {
   createInventoryItem,
@@ -22,7 +21,6 @@ export default function InventoryItemEditorScreen() {
   const isNew = id === 'new';
   const router = useRouter();
   const restaurantId = useRestaurantId();
-  const currentUser = useAuthStore((s) => s.currentUser)!;
   const queryClient = useQueryClient();
 
   const [name, setName] = useState('');
