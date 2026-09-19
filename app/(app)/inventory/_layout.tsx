@@ -5,6 +5,7 @@ export default function InventoryLayout() {
     <Stack>
       <Stack.Screen name="index" options={{ title: 'Inventory' }} />
       <Stack.Screen name="[id]" options={{ title: 'Inventory Item', presentation: 'modal' }} />
+      <Stack.Screen name="purchase" options={{ title: 'Record Purchase', presentation: 'modal' }} />
     </Stack>
   );
 }
