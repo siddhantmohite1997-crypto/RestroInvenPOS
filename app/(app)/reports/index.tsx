@@ -7,11 +7,12 @@ import { useRestaurantId } from '@/features/auth/useRestaurantId';
 import { getSalesSummary } from '@/features/reports/reportService';
 import { getPurchasesTotal } from '@/features/inventory/purchaseService';
 import { calculateNetProfit } from '@/features/reports/reportEngine';
-import { today, yesterday, thisWeek, thisMonth } from '@/features/reports/dateRanges';
+import { today, yesterday, thisWeek, thisMonth, monthsAgo, monthLabel } from '@/features/reports/dateRanges';
 import { buildReportHtml } from '@/features/reports/reportHtml';
 import { documentPdfUri } from '@/features/receipts/printerService';
 import { shareReceiptFile } from '@/features/receipts/shareService';
 import { Button } from '@/components/Button';
+import { MonthPicker } from '@/components/MonthPicker';
 
 type PresetKey = 'today' | 'yesterday' | 'week' | 'month';
 
@@ -29,8 +30,10 @@ export default function ReportsScreen() {
   const restaurantId = useRestaurantId();
   const currencySymbol = useAuthStore((s) => s.restaurant?.currencySymbol ?? '₹');
   const [preset, setPreset] = useState<PresetKey>('today');
+  const [monthsBack, setMonthsBack] = useState<number | null>(null);
 
   const range = useMemo(() => {
+    if (monthsBack != null) return monthsAgo(monthsBack);
     switch (preset) {
       case 'today':
         return today();
@@ -41,15 +44,15 @@ export default function ReportsScreen() {
       case 'month':
         return thisMonth();
     }
-  }, [preset]);
+  }, [preset, monthsBack]);
 
   const summaryQuery = useQuery({
-    queryKey: ['salesSummary', restaurantId, preset],
+    queryKey: ['salesSummary', restaurantId, preset, monthsBack],
     queryFn: () => getSalesSummary(restaurantId, range),
   });
 
   const purchasesTotalQuery = useQuery({
-    queryKey: ['purchasesTotal', restaurantId, preset],
+    queryKey: ['purchasesTotal', restaurantId, preset, monthsBack],
     queryFn: () => getPurchasesTotal(restaurantId, range),
   });
 
@@ -62,7 +65,7 @@ export default function ReportsScreen() {
 
   const shareReportMutation = useMutation({
     mutationFn: async () => {
-      const label = PRESETS.find((p) => p.key === preset)?.label ?? '';
+      const label = monthsBack != null ? monthLabel(monthsBack) : (PRESETS.find((p) => p.key === preset)?.label ?? '');
       const html = buildReportHtml({
         businessName: restaurantName,
         rangeLabel: label,
@@ -82,12 +85,18 @@ export default function ReportsScreen() {
         {PRESETS.map((p) => (
           <Pressable
             key={p.key}
-            onPress={() => setPreset(p.key)}
-            style={[styles.chip, preset === p.key && styles.chipActive]}
+            onPress={() => {
+              setPreset(p.key);
+              setMonthsBack(null);
+            }}
+            style={[styles.chip, monthsBack == null && preset === p.key && styles.chipActive]}
           >
-            <Text style={[styles.chipText, preset === p.key && styles.chipTextActive]}>{p.label}</Text>
+            <Text style={[styles.chipText, monthsBack == null && preset === p.key && styles.chipTextActive]}>
+              {p.label}
+            </Text>
           </Pressable>
         ))}
+        <MonthPicker monthsBack={monthsBack} onChange={setMonthsBack} />
       </View>
 
       {summary && (
@@ -135,7 +144,16 @@ export default function ReportsScreen() {
         </>
       )}
 
-      <Button label="Item-wise Sales" onPress={() => router.push({ pathname: '/reports/item-sales', params: { preset } })} style={styles.button} />
+      <Button
+        label="Item-wise Sales"
+        onPress={() =>
+          router.push({
+            pathname: '/reports/item-sales',
+            params: { preset, monthsBack: monthsBack != null ? String(monthsBack) : undefined },
+          })
+        }
+        style={styles.button}
+      />
       <Button
         label="Daily Expense"
         variant="secondary"

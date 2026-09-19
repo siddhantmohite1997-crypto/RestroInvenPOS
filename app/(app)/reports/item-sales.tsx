@@ -5,14 +5,15 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
 import { getItemWiseSales } from '@/features/reports/reportService';
-import { today, yesterday, thisWeek, thisMonth } from '@/features/reports/dateRanges';
+import { today, yesterday, thisWeek, thisMonth, monthsAgo } from '@/features/reports/dateRanges';
 
 export default function ItemSalesScreen() {
-  const { preset } = useLocalSearchParams<{ preset?: string }>();
+  const { preset, monthsBack } = useLocalSearchParams<{ preset?: string; monthsBack?: string }>();
   const restaurantId = useRestaurantId();
   const currencySymbol = useAuthStore((s) => s.restaurant?.currencySymbol ?? '₹');
 
   const range = useMemo(() => {
+    if (monthsBack != null) return monthsAgo(Number(monthsBack));
     switch (preset) {
       case 'yesterday':
         return yesterday();
@@ -23,10 +24,10 @@ export default function ItemSalesScreen() {
       default:
         return today();
     }
-  }, [preset]);
+  }, [preset, monthsBack]);
 
   const itemSalesQuery = useQuery({
-    queryKey: ['itemWiseSales', restaurantId, preset ?? 'today'],
+    queryKey: ['itemWiseSales', restaurantId, preset ?? 'today', monthsBack ?? ''],
     queryFn: () => getItemWiseSales(restaurantId, range),
   });
 

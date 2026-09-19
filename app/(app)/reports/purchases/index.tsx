@@ -4,7 +4,8 @@ import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
 import { listPurchases } from '@/features/inventory/purchaseService';
-import { today, yesterday, thisWeek, thisMonth } from '@/features/reports/dateRanges';
+import { today, yesterday, thisWeek, thisMonth, monthsAgo } from '@/features/reports/dateRanges';
+import { MonthPicker } from '@/components/MonthPicker';
 
 type PresetKey = 'today' | 'yesterday' | 'week' | 'month';
 
@@ -19,8 +20,10 @@ export default function PurchaseReportScreen() {
   const router = useRouter();
   const restaurantId = useRestaurantId();
   const [preset, setPreset] = useState<PresetKey>('today');
+  const [monthsBack, setMonthsBack] = useState<number | null>(null);
 
   const range = useMemo(() => {
+    if (monthsBack != null) return monthsAgo(monthsBack);
     switch (preset) {
       case 'today':
         return today();
@@ -31,10 +34,10 @@ export default function PurchaseReportScreen() {
       case 'month':
         return thisMonth();
     }
-  }, [preset]);
+  }, [preset, monthsBack]);
 
   const purchasesQuery = useQuery({
-    queryKey: ['purchases', restaurantId, preset],
+    queryKey: ['purchases', restaurantId, preset, monthsBack],
     queryFn: () => listPurchases(restaurantId, range),
   });
 
@@ -44,12 +47,18 @@ export default function PurchaseReportScreen() {
         {PRESETS.map((p) => (
           <Pressable
             key={p.key}
-            onPress={() => setPreset(p.key)}
-            style={[styles.chip, preset === p.key && styles.chipActive]}
+            onPress={() => {
+              setPreset(p.key);
+              setMonthsBack(null);
+            }}
+            style={[styles.chip, monthsBack == null && preset === p.key && styles.chipActive]}
           >
-            <Text style={[styles.chipText, preset === p.key && styles.chipTextActive]}>{p.label}</Text>
+            <Text style={[styles.chipText, monthsBack == null && preset === p.key && styles.chipTextActive]}>
+              {p.label}
+            </Text>
           </Pressable>
         ))}
+        <MonthPicker monthsBack={monthsBack} onChange={setMonthsBack} />
       </View>
       <FlatList
         data={purchasesQuery.data ?? []}
