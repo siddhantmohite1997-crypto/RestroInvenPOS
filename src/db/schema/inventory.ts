@@ -14,6 +14,7 @@ export const suppliers = sqliteTable('suppliers', {
   name: text('name').notNull(),
   phone: text('phone'),
   gstNumber: text('gst_number'),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
     .notNull()
     .$defaultFn(() => new Date()),
