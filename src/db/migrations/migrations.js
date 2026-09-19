@@ -13,6 +13,7 @@ import m0008 from './0008_round_madame_masque.sql';
 import m0009 from './0009_round_drax.sql';
 import m0010 from './0010_marvelous_banshee.sql';
 import m0011 from './0011_tidy_mantis.sql';
+import m0012 from './0012_chubby_warbound.sql';
 
   export default {
     journal,
@@ -28,7 +29,8 @@ m0007,
 m0008,
 m0009,
 m0010,
-m0011
+m0011,
+m0012
     }
   }
   

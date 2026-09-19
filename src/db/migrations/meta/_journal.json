@@ -85,6 +85,13 @@
       "when": 1789490922238,
       "tag": "0011_tidy_mantis",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1789832920236,
+      "tag": "0012_chubby_warbound",
+      "breakpoints": true
     }
   ]
 }
