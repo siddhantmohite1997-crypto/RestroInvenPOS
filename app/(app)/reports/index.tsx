@@ -5,6 +5,8 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
 import { getSalesSummary } from '@/features/reports/reportService';
+import { getPurchasesTotal } from '@/features/inventory/purchaseService';
+import { calculateNetProfit } from '@/features/reports/reportEngine';
 import { today, yesterday, thisWeek, thisMonth } from '@/features/reports/dateRanges';
 import { buildReportHtml } from '@/features/reports/reportHtml';
 import { documentPdfUri } from '@/features/receipts/printerService';
@@ -44,6 +46,11 @@ export default function ReportsScreen() {
   const summaryQuery = useQuery({
     queryKey: ['salesSummary', restaurantId, preset],
     queryFn: () => getSalesSummary(restaurantId, range),
+  });
+
+  const purchasesTotalQuery = useQuery({
+    queryKey: ['purchasesTotal', restaurantId, preset],
+    queryFn: () => getPurchasesTotal(restaurantId, range),
   });
 
   const summary = summaryQuery.data;
@@ -97,6 +104,16 @@ export default function ReportsScreen() {
             <SummaryCard label="Orders" value={String(summary.orderCount)} />
             <SummaryCard label="Voids" value={String(summary.voidCount)} />
           </View>
+          {purchasesTotalQuery.data != null && (
+            <View style={styles.cardRow}>
+              <SummaryCard label="Purchases" value={money(purchasesTotalQuery.data)} />
+              <SummaryCard
+                label="Net Profit"
+                value={money(calculateNetProfit(summary.netSales, purchasesTotalQuery.data))}
+                emphasize
+              />
+            </View>
+          )}
 
           <Text style={styles.sectionLabel}>Payment mode breakdown</Text>
           <View style={styles.paymentBlock}>
