@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { suppliers, purchases, inventoryItems, inventoryPurchases } from '@/db/schema';
 import { generateId } from '@/lib/id';
@@ -68,12 +68,23 @@ export async function recordSupplierPurchase(input: RecordSupplierPurchaseInput)
       });
     }
 
+    const totalCost = round2(
+      input.lines.reduce((sum, line) => round2(sum + round2(line.quantity * line.costPerUnit)), 0),
+    );
+
     const purchaseId = generateId();
-    let totalCost = 0;
+
+    await tx.insert(purchases).values({
+      id: purchaseId,
+      restaurantId: input.restaurantId,
+      supplierId,
+      staffId: input.staffId,
+      purchasedAt,
+      totalCost,
+    });
 
     for (const line of input.lines) {
       const lineTotal = round2(line.quantity * line.costPerUnit);
-      totalCost = round2(totalCost + lineTotal);
 
       let inventoryItemId = line.inventoryItemId;
       if (!inventoryItemId) {
@@ -110,15 +121,6 @@ export async function recordSupplierPurchase(input: RecordSupplierPurchaseInput)
         })
         .where(eq(inventoryItems.id, inventoryItemId));
     }
-
-    await tx.insert(purchases).values({
-      id: purchaseId,
-      restaurantId: input.restaurantId,
-      supplierId,
-      staffId: input.staffId,
-      purchasedAt,
-      totalCost,
-    });
 
     return purchaseId;
   });
@@ -230,7 +232,8 @@ export async function getPurchaseDetail(purchaseId: string): Promise<PurchaseDet
  * practice, but this is the more direct query for "what did bills in this range cost"). */
 export async function getPurchasesTotal(restaurantId: string, range: { start: Date; end: Date }): Promise<number> {
   const rows = await db.query.purchases.findMany({
-    where: and(eq(purchases.restaurantId, restaurantId), sql`${purchases.purchasedAt} >= ${range.start.getTime()}`, sql`${purchases.purchasedAt} < ${range.end.getTime()}`),
+    where: (p, { and: andOp, eq: eqOp, gte, lt }) =>
+      andOp(eqOp(p.restaurantId, restaurantId), gte(p.purchasedAt, range.start), lt(p.purchasedAt, range.end)),
   });
   return round2(rows.reduce((sum, r) => sum + r.totalCost, 0));
 }

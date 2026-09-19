@@ -26,6 +26,6 @@ CREATE TABLE purchases (
 -- Nullable and additive: every restock already logged via the old single-item "Record Restock"
 -- flow keeps this NULL (not part of any bill, which is accurate). See
 -- src/db/schema/inventory.ts's `purchaseId` comment on inventoryPurchases.
-ALTER TABLE inventory_purchases ADD COLUMN purchase_id TEXT REFERENCES purchases(id);
+ALTER TABLE inventory_purchases ADD COLUMN purchase_id TEXT REFERENCES purchases(id) ON DELETE CASCADE;
 
 CREATE INDEX idx_purchases_restaurant_date ON purchases (restaurant_id, purchased_at);

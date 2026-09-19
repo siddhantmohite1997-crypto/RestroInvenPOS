@@ -158,8 +158,9 @@ export async function pairWithRestaurant(input: PairInput): Promise<PairResult> 
 // RESTORE FROM CLOUD
 // ============================================================================
 
-/** Mirrors api/src/index.ts's TABLE_MAP key order exactly (FK-safe: parents before children) --
- * restore inserts must walk the same order or a child row's FK target won't exist yet. */
+/** Preserves the same parent-before-child relationships as api/src/index.ts's TABLE_MAP (not an
+ * identical key order -- e.g. TABLE_MAP includes `restaurants`, which this list never did) --
+ * restore inserts must walk an order where a child row's FK target already exists. */
 const RESTORE_TABLE_ORDER: { key: string; table: SQLiteTable }[] = [
   { key: 'categories', table: categories },
   { key: 'suppliers', table: suppliers },

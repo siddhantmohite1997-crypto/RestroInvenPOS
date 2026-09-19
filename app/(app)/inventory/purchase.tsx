@@ -39,6 +39,9 @@ export default function PurchaseEntryScreen() {
 
   const [lines, setLines] = useState<AddedLine[]>([]);
 
+  // Purchase date -- defaults to today, editable for backdating a bill entered a day late.
+  const [purchaseDate, setPurchaseDate] = useState(new Date());
+
   const suppliersQuery = useQuery({
     queryKey: ['supplierSuggestions', restaurantId, supplierQuery],
     queryFn: () => getSupplierSuggestions(restaurantId, supplierQuery),
@@ -108,6 +111,7 @@ export default function PurchaseEntryScreen() {
         newSupplierName: supplierId ? undefined : supplierQuery.trim() || undefined,
         newSupplierPhone: supplierId ? undefined : supplierPhone.trim() || undefined,
         newSupplierGstNumber: supplierId ? undefined : supplierGst.trim() || undefined,
+        purchasedAt: purchaseDate,
         lines: lines.map((l) => ({
           inventoryItemId: l.inventoryItemId,
           newItemName: l.newItemName,
@@ -131,6 +135,20 @@ export default function PurchaseEntryScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.container} keyboardDismissMode="on-drag">
+      <Text style={styles.sectionLabel}>Purchase date</Text>
+      <View style={styles.dateRow}>
+        <Text style={styles.dateValue}>{purchaseDate.toLocaleDateString()}</Text>
+        <Button label="Today" variant="secondary" onPress={() => setPurchaseDate(new Date())} style={styles.dateButton} />
+        <Button
+          label="Yesterday"
+          variant="secondary"
+          onPress={() => setPurchaseDate(new Date(Date.now() - 86400000))}
+          style={styles.dateButton}
+        />
+      </View>
+
+      <View style={styles.divider} />
+
       <Text style={styles.sectionLabel}>Supplier (optional)</Text>
       <FormField
         label="Supplier name"
@@ -233,6 +251,9 @@ const styles = StyleSheet.create({
   container: { padding: 16, paddingBottom: 40 },
   sectionLabel: { fontSize: 14, fontWeight: '600', marginBottom: 8, color: '#333' },
   divider: { height: 1, backgroundColor: '#eee', marginVertical: 16 },
+  dateRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  dateValue: { fontSize: 15, fontWeight: '600', flex: 1 },
+  dateButton: { paddingHorizontal: 14, paddingVertical: 8 },
   suggestions: { backgroundColor: '#fff8e6', borderRadius: 8, padding: 10, marginTop: -8, marginBottom: 16 },
   suggestionRow: { backgroundColor: 'white', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 4 },
   suggestionName: { fontSize: 15, fontWeight: '600', color: '#111' },

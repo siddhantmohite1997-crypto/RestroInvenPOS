@@ -1,4 +1,4 @@
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { getPurchaseDetail } from '@/features/inventory/purchaseService';
@@ -10,6 +10,22 @@ export default function PurchaseDetailScreen() {
     queryFn: () => getPurchaseDetail(id),
   });
   const detail = detailQuery.data;
+
+  if (detailQuery.isLoading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
+
+  if (detailQuery.isSuccess && !detail) {
+    return (
+      <View style={styles.center}>
+        <Text>Purchase not found</Text>
+      </View>
+    );
+  }
 
   if (!detail) return null;
 
@@ -41,6 +57,7 @@ export default function PurchaseDetailScreen() {
 
 const styles = StyleSheet.create({
   container: { padding: 16 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   supplier: { fontSize: 20, fontWeight: '700' },
   date: { fontSize: 13, color: '#666', marginTop: 2, marginBottom: 16 },
   card: { backgroundColor: '#f5f5f5', borderRadius: 10, padding: 16 },
