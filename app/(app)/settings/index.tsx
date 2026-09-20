@@ -21,10 +21,14 @@ export default function SettingsScreen() {
   });
 
   // canManageStaff/canViewAuditLog are both owner-only under the Owner/Captain/Waiter model,
-  // so this screen naturally collapses to just the header + Log out for Captain and Waiter —
-  // no management links rendered at all, not disabled-and-visible.
+  // so this screen naturally collapses to just the header + Log out (plus More, for Captain)
+  // for Captain and Waiter — no management links rendered at all, not disabled-and-visible.
   const isManager = currentUser ? canManageStaff(currentUser.role) : false;
   const canSeeAudit = currentUser ? canViewAuditLog(currentUser.role) : false;
+  // Purchase Tracking is Owner/Captain only, same as Inventory/Recipes -- both roles reach the
+  // shared /more screen from here rather than Captain getting its own dedicated bottom tab, since
+  // every role that needs this already has a Settings tab.
+  const showMoreLink = currentUser ? currentUser.role === 'owner' || currentUser.role === 'admin' : false;
 
   return (
     <View style={styles.container}>
@@ -54,10 +58,12 @@ export default function SettingsScreen() {
           <Pressable style={styles.linkRow} onPress={() => router.push('/settings/sync')}>
             <Text style={styles.linkText}>Sync</Text>
           </Pressable>
-          <Pressable style={styles.linkRow} onPress={() => router.push('/more')}>
-            <Text style={styles.linkText}>More</Text>
-          </Pressable>
         </>
+      )}
+      {showMoreLink && (
+        <Pressable style={styles.linkRow} onPress={() => router.push('/more')}>
+          <Text style={styles.linkText}>More</Text>
+        </Pressable>
       )}
       {canSeeAudit && (
         <Pressable style={styles.linkRow} onPress={() => router.push('/settings/audit-log')}>

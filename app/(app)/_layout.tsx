@@ -28,14 +28,13 @@ export default function AppLayout() {
   // combos, scan-to-menu) that only Owner/Captain use, so it's just an extra tap to skip past
   // for a Waiter.
   const showMenu = !isWaiter;
-  // Captain-only: Owner reaches the same /more screen through a link inside Settings instead
-  // (see settings/index.tsx) since Owner already has a dedicated Settings section for
-  // management links, and Waiter needs neither -- Purchase Tracking is Owner/Captain only,
-  // same as Inventory/Recipes.
-  const showMoreTab = currentUser.role === 'admin';
 
   return (
-    <Tabs screenOptions={{ headerShown: true }} initialRouteName={isOwner ? 'menu' : 'orders'}>
+    <Tabs
+      screenOptions={{ headerShown: true }}
+      initialRouteName={isOwner ? 'menu' : 'orders'}
+      backBehavior="history"
+    >
       <Tabs.Screen
         name="orders"
         options={{
@@ -103,8 +102,7 @@ export default function AppLayout() {
         options={{
           title: 'More',
           headerShown: false,
-          href: showMoreTab ? undefined : null,
-          tabBarIcon: ({ color, size }) => <Ionicons name="ellipsis-horizontal-outline" size={size} color={color} />,
+          href: null,
         }}
       />
       <Tabs.Screen
