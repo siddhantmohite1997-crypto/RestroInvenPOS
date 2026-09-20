@@ -34,7 +34,8 @@ export interface PurchaseLineInput {
 export interface RecordSupplierPurchaseInput {
   restaurantId: string;
   staffId: string;
-  /** Defaults to now -- same backdating reasoning as recordPurchase()'s purchasedAt. */
+  /** Defaults to now -- override for a purchase entered a day (or more) late, so it still counts
+   * against the day it actually happened rather than the day someone got around to logging it. */
   purchasedAt?: Date;
   /** Set when the supplier matches one picked from suggestions. */
   supplierId?: string;
@@ -48,10 +49,9 @@ export interface RecordSupplierPurchaseInput {
 
 /** Logs a multi-item supplier bill in one transaction: resolves (or creates) the supplier,
  * resolves (or creates) each line's inventory item, writes one inventory_purchases row per
- * line sharing this bill's purchase_id, and bumps each item's stock/costPerUnit -- the same
- * per-line update recordPurchase() does for a single-item restock, just looped here and never
- * going through that function directly (or through createInventoryItem), since both of those
- * use the top-level `db` and would not participate in this transaction. */
+ * line sharing this bill's purchase_id, and bumps each item's stock/costPerUnit -- looped here
+ * rather than through createInventoryItem, since that uses the top-level `db` and would not
+ * participate in this transaction. */
 export async function recordSupplierPurchase(input: RecordSupplierPurchaseInput): Promise<string> {
   const purchasedAt = input.purchasedAt ?? new Date();
 
@@ -241,8 +241,11 @@ export async function getPurchasesTotal(restaurantId: string, range: { start: Da
 export interface VendorInput {
   restaurantId: string;
   name: string;
-  phone?: string;
-  gstNumber?: string;
+  /** `null` and omission both mean "no phone/GST" for createVendor -- the type allows both since
+   * the Vendor editor's save mutation reuses the same input shape it uses to explicitly clear a
+   * field on updateVendor (see updateVendor below), rather than having a separate shape per call. */
+  phone?: string | null;
+  gstNumber?: string | null;
 }
 
 /** Active vendors, alphabetical -- powers the Vendors list screen. Unlike
@@ -265,20 +268,30 @@ export async function createVendor(input: VendorInput): Promise<string> {
   await db.insert(suppliers).values({
     id,
     restaurantId: input.restaurantId,
-    name: input.name,
+    name: input.name.trim(),
     phone: input.phone || null,
     gstNumber: input.gstNumber || null,
   });
   return id;
 }
 
+/** phone/gstNumber accept `null` (clear the field) as well as a string (set it) or omission
+ * (leave it untouched) -- unlike a plain `Partial`, an explicit `undefined` here is never passed
+ * through to drizzle's `.set()`, which silently drops any key whose value is `undefined` from the
+ * generated UPDATE. Built as an explicit object below rather than spreading `input` so a
+ * genuinely-omitted field still gets skipped while `null` survives. */
 export async function updateVendor(
   id: string,
-  input: Partial<Pick<VendorInput, 'name' | 'phone' | 'gstNumber'>>,
+  input: { name?: string; phone?: string | null; gstNumber?: string | null },
 ): Promise<void> {
   await db
     .update(suppliers)
-    .set({ ...input, updatedAt: new Date() })
+    .set({
+      ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+      ...(input.phone !== undefined ? { phone: input.phone } : {}),
+      ...(input.gstNumber !== undefined ? { gstNumber: input.gstNumber } : {}),
+      updatedAt: new Date(),
+    })
     .where(eq(suppliers.id, id));
 }
 

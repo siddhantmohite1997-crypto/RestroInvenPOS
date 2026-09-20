@@ -1,11 +1,10 @@
 import { eq, sql } from 'drizzle-orm';
 import { db } from '@/db/client';
-import { inventoryItems, inventoryPurchases, recipeIngredients } from '@/db/schema';
+import { inventoryItems, recipeIngredients } from '@/db/schema';
 import { generateId } from '@/lib/id';
 
 export type InventoryItem = typeof inventoryItems.$inferSelect;
 export type RecipeIngredient = typeof recipeIngredients.$inferSelect;
-export type InventoryPurchase = typeof inventoryPurchases.$inferSelect;
 
 /** Display-time defense-in-depth against floating-point artifacts (e.g. 9.400000000000002)
  * in the quantity — consumeIngredients rounds at write time, but this covers any row written

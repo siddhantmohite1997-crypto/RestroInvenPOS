@@ -1,6 +1,7 @@
+import { useCallback } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
-import { useQuery } from '@tanstack/react-query';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
 import { listVendors } from '@/features/inventory/purchaseService';
 import { Button } from '@/components/Button';
@@ -8,11 +9,22 @@ import { Button } from '@/components/Button';
 export default function VendorsScreen() {
   const router = useRouter();
   const restaurantId = useRestaurantId();
+  const queryClient = useQueryClient();
 
   const vendorsQuery = useQuery({
     queryKey: ['vendors', restaurantId],
     queryFn: () => listVendors(restaurantId),
   });
+
+  // This screen stays mounted in the background when reached via a tab (Captain's More tab, or
+  // Owner's Settings > More link), so without this, a supplier created inline from the Purchase
+  // entry screen never shows up here until the app restarts. Re-fetch every time the screen
+  // actually comes into view instead.
+  useFocusEffect(
+    useCallback(() => {
+      queryClient.invalidateQueries({ queryKey: ['vendors', restaurantId] });
+    }, [queryClient, restaurantId]),
+  );
 
   return (
     <View style={styles.container}>

@@ -52,7 +52,7 @@ export const inventoryItems = sqliteTable('inventory_items', {
 /** The header of a multi-item supplier bill -- "bought these N items from this supplier on
  * this date, for this total". Its line items live in inventoryPurchases (see purchaseId below);
  * this table exists so a bill can be browsed as one thing in Reports > Purchase Report, rather
- * than only ever appearing as N separate flat rows in the Daily Expense log. */
+ * than only ever appearing as N separate flat rows. */
 export const purchases = sqliteTable('purchases', {
   id: text('id').primaryKey(),
   restaurantId: text('restaurant_id')
@@ -71,10 +71,11 @@ export const purchases = sqliteTable('purchases', {
 
 /** A logged restock event -- money actually spent on inventory on a specific date. Distinct
  * from inventoryItems.quantity (a running stock snapshot) and its costPerUnit (a reference
- * price for the *next* purchase) -- this table is the append-only history the Daily Expense
- * report sums over a date range. Editing "Quantity in stock" directly in the item editor (a
- * stocktake correction) intentionally does NOT write one of these; only the dedicated Restock
- * action does, so a manual quantity fix never gets miscounted as money spent. */
+ * price for the *next* purchase) -- this table is the append-only history populated by
+ * recordSupplierPurchase() (the multi-item Purchase entry flow) and read by the Purchase Report
+ * and getPurchasesTotal. Editing "Quantity in stock" directly in the item editor (a stocktake
+ * correction) intentionally does NOT write one of these, so a manual quantity fix never gets
+ * miscounted as money spent. */
 export const inventoryPurchases = sqliteTable('inventory_purchases', {
   id: text('id').primaryKey(),
   restaurantId: text('restaurant_id')
@@ -84,8 +85,9 @@ export const inventoryPurchases = sqliteTable('inventory_purchases', {
     .notNull()
     .references(() => inventoryItems.id),
   /** Set when this restock is one line of a multi-item purchase bill (see purchases above).
-   * Null for a restock logged the old way, one item at a time via the Inventory item editor's
-   * "Record Restock" section -- that's still fully supported and just isn't part of any bill. */
+   * Null identifies a legacy row logged one item at a time via the Inventory item editor's old
+   * "Record Restock" flow, from before this multi-item Purchase Tracking feature existed --
+   * that flow has since been removed, so no row created going forward will have this be null. */
   purchaseId: text('purchase_id').references(() => purchases.id),
   quantity: real('quantity').notNull(),
   costPerUnit: real('cost_per_unit').notNull(),

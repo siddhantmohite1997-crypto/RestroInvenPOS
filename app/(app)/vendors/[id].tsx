@@ -42,7 +42,7 @@ export default function VendorEditorScreen() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const input = { name, phone: phone.trim() || undefined, gstNumber: gstNumber.trim() || undefined };
+      const input = { name, phone: phone.trim() || null, gstNumber: gstNumber.trim() || null };
       if (isNew) {
         await createVendor({ restaurantId, ...input });
       } else {
