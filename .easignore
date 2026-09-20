@@ -2,3 +2,11 @@
 # .claude/skills content which trips up EAS's archiver on Windows (EPERM on symlink).
 .claude/
 .agents/
+
+# Local native-build output/caches from `npx expo run:android` — machine-specific, and
+# shipping them to EAS's remote builder breaks its Gradle build (stale absolute paths,
+# incompatible intermediate state). EAS still gets the actual android/ project source
+# (build.gradle, manifests, res/), just not what a prior local build produced from it.
+android/app/build/
+android/.gradle/
+android/build/
