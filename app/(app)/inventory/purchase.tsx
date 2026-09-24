@@ -21,6 +21,7 @@ export default function PurchaseEntryScreen() {
   const router = useRouter();
   const restaurantId = useRestaurantId();
   const currentUser = useAuthStore((s) => s.currentUser)!;
+  const currentPin = useAuthStore((s) => s.currentPin);
   const queryClient = useQueryClient();
 
   // Supplier
@@ -107,6 +108,7 @@ export default function PurchaseEntryScreen() {
       recordSupplierPurchase({
         restaurantId,
         staffId: currentUser.id,
+        pin: currentPin!,
         supplierId: supplierId ?? undefined,
         newSupplierName: supplierId ? undefined : supplierQuery.trim() || undefined,
         newSupplierPhone: supplierId ? undefined : supplierPhone.trim() || undefined,
