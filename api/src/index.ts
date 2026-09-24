@@ -135,6 +135,27 @@ const TABLE_MAP: Record<string, { table: string; conflictTarget: string }> = {
   auditLogs: { table: 'audit_logs', conflictTarget: 'id' },
 };
 
+// Which timestamp column each table's pull query filters on. Tables never updated after
+// insert (append-only logs) use created_at; everything else uses updated_at. orders is handled
+// specially below (its own updated_at decides whether to include it, but its four child tables
+// are never filtered individually -- they're always resent in full for any order that qualifies,
+// matching how the push side already treats an order's children as "all-or-nothing" rather than
+// diffing them separately). menuItemModifierGroups has no updated_at column (composite-keyed,
+// never edited after creation -- only added or removed) so it's append-only too, filtered on
+// created_at like the others in this list.
+const APPEND_ONLY_TABLES = new Set([
+  'inventoryPurchases',
+  'auditLogs',
+  'purchases',
+  'menuItemModifierGroups',
+  'comboDealItems',
+  'taxComponents',
+]);
+
+// orders' four child tables are pulled alongside their parent order, never independently --
+// see the /sync handler's pull section.
+const ORDER_CHILD_TABLES = ['orderItems', 'orderItemModifiers', 'discounts', 'payments'] as const;
+
 // ============================================================================
 // PAIR ENDPOINT
 // ============================================================================
@@ -210,6 +231,32 @@ async function fetchAllRows(
       .select('*')
       .eq('restaurant_id', restaurantId)
       .range(from, from + RESTORE_PAGE_SIZE - 1);
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if (!data || data.length < RESTORE_PAGE_SIZE) break;
+    from += RESTORE_PAGE_SIZE;
+  }
+  return rows;
+}
+
+/** Rows changed since `sinceIso` (exclusive) for one table -- the pull-side mirror of
+ * fetchAllRows, filtered by whichever timestamp column that table uses for change detection.
+ * `sinceIso === null` means "never pulled before", so every row for this restaurant counts as
+ * changed, matching filterChangedSince's client-side "null means everything" convention. */
+async function fetchChangedRows(
+  pgTable: string,
+  restaurantId: string,
+  timestampColumn: 'updated_at' | 'created_at',
+  sinceIso: string | null,
+): Promise<Record<string, unknown>[]> {
+  const rows: Record<string, unknown>[] = [];
+  let from = 0;
+  for (;;) {
+    let query = supabase.from(pgTable).select('*').eq('restaurant_id', restaurantId);
+    if (sinceIso !== null) {
+      query = query.gt(timestampColumn, sinceIso);
+    }
+    const { data, error } = await query.range(from, from + RESTORE_PAGE_SIZE - 1);
     if (error) throw error;
     rows.push(...(data ?? []));
     if (!data || data.length < RESTORE_PAGE_SIZE) break;
@@ -367,8 +414,9 @@ app.post('/staff', async (req: Request, res: Response) => {
 
 app.post('/sync', async (req: Request, res: Response) => {
   try {
-    const { restaurantId, pin, syncData, checkOnly } = req.body as SyncRequest & {
+    const { restaurantId, pin, syncData, checkOnly, lastPulledAt } = req.body as SyncRequest & {
       checkOnly?: boolean;
+      lastPulledAt?: string | null;
     };
 
     if (!restaurantId || !pin) {
@@ -479,6 +527,43 @@ app.post('/sync', async (req: Request, res: Response) => {
       pushedCounts[jsKey] = rows.length;
     }
 
+    // Captured before running any pull queries -- any row written concurrently with this
+    // request either lands in this response (if its timestamp query already covers it) or the
+    // next one (since its timestamp will be > this captured moment either way). Never both
+    // included and later missed.
+    const serverNow = new Date();
+
+    const pulledData: Record<string, unknown[]> = {};
+    const sinceIso = lastPulledAt ?? null;
+
+    for (const [jsKey, { table: pgTable }] of Object.entries(TABLE_MAP)) {
+      if (jsKey === 'orders') continue; // handled specially below, with its children
+      if ((ORDER_CHILD_TABLES as readonly string[]).includes(jsKey)) continue;
+      const timestampColumn = APPEND_ONLY_TABLES.has(jsKey) ? 'created_at' : 'updated_at';
+      pulledData[jsKey] = await fetchChangedRows(pgTable, restaurantId, timestampColumn, sinceIso);
+    }
+
+    // Orders: find which orders changed, then pull ALL current rows of their four child tables
+    // for exactly those orders -- never filtered by the children's own timestamps, matching how
+    // the push side already resends an order's children in full whenever the order itself is
+    // dirty, rather than diffing them individually.
+    const changedOrders = await fetchChangedRows('orders', restaurantId, 'updated_at', sinceIso);
+    pulledData.orders = changedOrders;
+    const changedOrderIds = changedOrders.map((o) => o.id as string);
+
+    for (const jsKey of ORDER_CHILD_TABLES) {
+      const pgTable = TABLE_MAP[jsKey].table;
+      if (changedOrderIds.length === 0) {
+        pulledData[jsKey] = [];
+        continue;
+      }
+      const { data, error } = await supabase.from(pgTable).select('*').in('order_id', changedOrderIds);
+      if (error) throw error;
+      pulledData[jsKey] = data ?? [];
+    }
+
+    const newPulledAt = serverNow.toISOString();
+
     // Update last_synced_at
     await supabase
       .from('restaurants')
@@ -489,7 +574,9 @@ app.post('/sync', async (req: Request, res: Response) => {
       success: true,
       syncedAt: new Date().toISOString(),
       pushedCounts,
-    } as SyncResponse);
+      pulledData,
+      newPulledAt,
+    });
   } catch (err) {
     console.error('Sync error:', err);
     res.status(500).json({
