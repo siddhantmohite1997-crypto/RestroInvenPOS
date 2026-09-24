@@ -778,6 +778,12 @@ const LAST_WRITE_WINS_TABLES: { key: string; table: SQLiteTable }[] = [
   { key: 'comboDeals', table: comboDeals },
   { key: 'suppliers', table: suppliers },
   { key: 'diningTables', table: diningTables },
+  // recipeIngredients genuinely gets updated in place (see setRecipeIngredients in
+  // inventoryService.ts -- an existing ingredient row keeps its id and gets its
+  // quantityRequired/isActive updated, it is never treated as append-only), so it belongs
+  // here, not in APPEND_ONLY_TABLES below -- matching the server-side pull query in Task 4,
+  // which also filters it on updated_at, not created_at.
+  { key: 'recipeIngredients', table: recipeIngredients },
 ];
 
 /** Append-only: never updated after insert, so there's no conflict to resolve — insert if this
@@ -788,7 +794,6 @@ const APPEND_ONLY_TABLES: { key: string; table: SQLiteTable }[] = [
   { key: 'comboDealItems', table: comboDealItems },
   { key: 'purchases', table: purchases },
   { key: 'inventoryPurchases', table: inventoryPurchases },
-  { key: 'recipeIngredients', table: recipeIngredients },
   { key: 'auditLogs', table: auditLogs },
 ];
 
