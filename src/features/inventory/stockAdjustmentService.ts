@@ -35,31 +35,42 @@ async function callAdjustStock(input: AdjustStockInput): Promise<{ quantity: num
   return response.json();
 }
 
-/** The one place any code in this app changes inventory quantity. Always applies the change to
- * local SQLite immediately (the till is never blocked on network state), then attempts the same
- * change against the server live; if that fails for any reason (offline, timeout, server error),
- * the change is queued in pending_inventory_deltas instead of being lost, to be retried by
- * flushPendingInventoryDeltas() on the next periodic sync tick. */
+/** The one place any code in this app changes inventory quantity. Applies the change to local
+ * SQLite and queues it for the server in ONE transaction, then returns -- what the caller awaits
+ * is purely local work, never a network round-trip.
+ *
+ * That last part is a hard requirement, not an optimisation. Every caller on the till's critical
+ * path (addItemToOrder, cancelOrder's per-item restore loop, purchase entry) awaits this once per
+ * line item, sequentially. When this function awaited the live HTTP call, a reachable-but-
+ * unresponsive connection -- a captive portal, a hanging server: the failure mode that fails
+ * slowly rather than fast -- stalled each of those awaits for the platform's default socket
+ * timeout, multiplied by the number of items in the loop. Taking an order must never be blocked
+ * by network conditions, so delivery is structurally decoupled from the caller's await below.
+ *
+ * Every call queues a pending_inventory_deltas row unconditionally (not only on failure): the
+ * row is the durable record of "the server still owes this change", and
+ * flushPendingInventoryDeltas is the single code path that delivers one and marks it synced. The
+ * fire-and-forget flush kicked off here keeps the common online case prompt -- it typically
+ * delivers this very row a moment later -- but nothing about its outcome is awaited, so a slow
+ * network can only ever delay the flush, never the till. */
 export async function adjustStock(input: AdjustStockInput): Promise<void> {
-  if (input.delta !== undefined) {
-    await db
-      .update(inventoryItems)
-      .set({
-        quantity: sql`ROUND(${inventoryItems.quantity} + ${input.delta}, 3)`,
-        updatedAt: new Date(),
-      })
-      .where(eq(inventoryItems.id, input.inventoryItemId));
-  } else if (input.setAbsolute !== undefined) {
-    await db
-      .update(inventoryItems)
-      .set({ quantity: input.setAbsolute, updatedAt: new Date() })
-      .where(eq(inventoryItems.id, input.inventoryItemId));
-  }
+  await db.transaction(async (tx) => {
+    if (input.delta !== undefined) {
+      await tx
+        .update(inventoryItems)
+        .set({
+          quantity: sql`ROUND(${inventoryItems.quantity} + ${input.delta}, 3)`,
+          updatedAt: new Date(),
+        })
+        .where(eq(inventoryItems.id, input.inventoryItemId));
+    } else if (input.setAbsolute !== undefined) {
+      await tx
+        .update(inventoryItems)
+        .set({ quantity: input.setAbsolute, updatedAt: new Date() })
+        .where(eq(inventoryItems.id, input.inventoryItemId));
+    }
 
-  try {
-    await callAdjustStock(input);
-  } catch {
-    await db.insert(pendingInventoryDeltas).values({
+    await tx.insert(pendingInventoryDeltas).values({
       id: generateId(),
       restaurantId: input.restaurantId,
       inventoryItemId: input.inventoryItemId,
@@ -67,15 +78,37 @@ export async function adjustStock(input: AdjustStockInput): Promise<void> {
       setAbsolute: input.setAbsolute ?? null,
       reason: input.reason,
     });
-  }
+  });
+
+  // Deliberately not awaited, and deliberately never allowed to reject: see the doc comment.
+  void flushPendingInventoryDeltas(input.restaurantId, input.pin).catch(() => {});
+}
+
+/** Serializes every flush, from whatever caller: the periodic tick, and now one per adjustStock
+ * call. Two flushes must never overlap -- both would read the same still-unsynced row (the
+ * first has not marked it synced yet, since that only happens after its own HTTP call returns)
+ * and both would POST it, applying the same delta to the server twice. That is the exact
+ * silent double-count this whole area exists to prevent, so the flushes queue up behind each
+ * other instead. Rejections are absorbed into the chain's continuation so one failure can never
+ * strand every later flush. */
+let flushChain: Promise<void> = Promise.resolve();
+
+export function flushPendingInventoryDeltas(restaurantId: string, pin: string): Promise<void> {
+  const next = flushChain.then(
+    () => flushPendingInventoryDeltasInternal(restaurantId, pin),
+    () => flushPendingInventoryDeltasInternal(restaurantId, pin),
+  );
+  flushChain = next.catch(() => {});
+  return next;
 }
 
 /** Retries every unsynced queued delta, oldest first, against the live endpoint -- called from
  * usePeriodicSync's tick alongside the generic pull, so it piggybacks on the same 2-minute
- * cadence rather than running its own timer. A row that still fails stays queued for the next
- * tick; one that succeeds is marked synced (never deleted, so a device's own history of what it
- * queued and when stays inspectable if something needs debugging later). */
-export async function flushPendingInventoryDeltas(restaurantId: string, pin: string): Promise<void> {
+ * cadence rather than running its own timer, and (best-effort, never awaited) from adjustStock
+ * itself so the common online case still delivers promptly. A row that still fails stays queued
+ * for the next tick; one that succeeds is marked synced (never deleted, so a device's own
+ * history of what it queued and when stays inspectable if something needs debugging later). */
+async function flushPendingInventoryDeltasInternal(restaurantId: string, pin: string): Promise<void> {
   const pending = await db.query.pendingInventoryDeltas.findMany({
     where: (d, { and, eq: eqOp }) => and(eqOp(d.restaurantId, restaurantId), isNull(d.syncedAt)),
     orderBy: (d, { asc }) => asc(d.createdAt),
