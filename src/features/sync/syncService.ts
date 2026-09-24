@@ -25,9 +25,10 @@ import {
   suppliers,
   purchases,
 } from '@/db/schema';
-import { getLastSyncedAt, setLastSyncedAt } from './syncConfig';
+import { getLastSyncedAt, setLastSyncedAt, getLastPulledAt, setLastPulledAt } from './syncConfig';
 import { filterChangedSince } from './syncDiff';
 import { logSyncAttempt } from './syncLogService';
+import { applyPulledData } from './pullSync';
 
 /**
  * Phase 8.5: Supabase Backend Edition
@@ -58,7 +59,12 @@ async function callSupabaseSync(
   restaurantId: string,
   pin: string,
   syncData: Record<string, unknown>,
-): Promise<{ pushedCounts: Record<string, number> }> {
+  lastPulledAt: Date | null,
+): Promise<{
+  pushedCounts: Record<string, number>;
+  pulledData: Record<string, unknown[]>;
+  newPulledAt: string;
+}> {
   const response = await fetch(`${getApiUrl()}/sync`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -66,6 +72,7 @@ async function callSupabaseSync(
       restaurantId,
       pin,
       syncData,
+      lastPulledAt: lastPulledAt ? lastPulledAt.toISOString() : null,
     }),
   });
 
@@ -73,7 +80,11 @@ async function callSupabaseSync(
     throw new Error(`Sync failed: ${await readErrorMessage(response)}`);
   }
 
-  const result = (await response.json()) as { pushedCounts: Record<string, number> };
+  const result = (await response.json()) as {
+    pushedCounts: Record<string, number>;
+    pulledData: Record<string, unknown[]>;
+    newPulledAt: string;
+  };
   return result;
 }
 
@@ -475,8 +486,15 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
     lastSyncedAt,
   );
 
-  // Call Supabase API to sync (server handles all PostgreSQL writes)
-  const result = await callSupabaseSync(restaurantId, pin, syncData);
+  const lastPulledAt = await getLastPulledAt(restaurantId);
+
+  // Call Supabase API to sync (server handles all PostgreSQL writes for the push half)
+  const result = await callSupabaseSync(restaurantId, pin, syncData, lastPulledAt);
+
+  await db.transaction(async (tx) => {
+    await applyPulledData(tx, result.pulledData);
+  });
+  await setLastPulledAt(restaurantId, new Date(result.newPulledAt));
 
   const syncedAt = new Date();
   await setLastSyncedAt(restaurantId, syncedAt);

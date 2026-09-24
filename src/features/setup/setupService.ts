@@ -32,6 +32,7 @@ import {
 } from '@/db/schema';
 import { generateId } from '@/lib/id';
 import { createSalt, hashPin } from '@/features/auth/pin';
+import { setLastPulledAt } from '@/features/sync/syncConfig';
 
 export interface PairInput {
   restaurantId: string;
@@ -284,6 +285,12 @@ export async function restoreFromCloud(
       rowsRestored += rows.length;
     }
   });
+
+  // This device just received everything /restore has -- without this, its first periodic
+  // sync would pull the exact same full history all over again (lastPulledAt still null means
+  // "never pulled", per shouldApplyIncoming's convention). Idempotent either way (pullSync's
+  // onConflictDoUpdate/onConflictDoNothing handle a duplicate re-delivery safely), just wasteful.
+  await setLastPulledAt(restaurantId, new Date());
 
   return { tablesRestored, rowsRestored };
 }
