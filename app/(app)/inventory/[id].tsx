@@ -11,6 +11,8 @@ import {
   listInventoryItems,
   updateInventoryItem,
 } from '@/features/inventory/inventoryService';
+import { adjustStock } from '@/features/inventory/stockAdjustmentService';
+import { useAuthStore } from '@/store/authStore';
 import { FormField } from '@/components/FormField';
 import { UnitPicker } from '@/components/UnitPicker';
 import { CategoryPicker } from '@/components/CategoryPicker';
@@ -22,6 +24,7 @@ export default function InventoryItemEditorScreen() {
   const router = useRouter();
   const restaurantId = useRestaurantId();
   const queryClient = useQueryClient();
+  const currentPin = useAuthStore((s) => s.currentPin);
 
   const [name, setName] = useState('');
   const [category, setCategory] = useState<string | null>(null);
@@ -76,19 +79,38 @@ export default function InventoryItemEditorScreen() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const input = {
+      const newQuantity = parseFloat(quantity) || 0;
+      if (isNew) {
+        await createInventoryItem({
+          restaurantId,
+          name,
+          category: category ?? undefined,
+          unit,
+          quantity: newQuantity,
+          lowStockThreshold: lowStockThreshold ? parseFloat(lowStockThreshold) : undefined,
+          costPerUnit: costPerUnit ? parseFloat(costPerUnit) : undefined,
+        });
+        return;
+      }
+
+      await updateInventoryItem(id, {
         restaurantId,
         name,
         category: category ?? undefined,
         unit,
-        quantity: parseFloat(quantity) || 0,
         lowStockThreshold: lowStockThreshold ? parseFloat(lowStockThreshold) : undefined,
         costPerUnit: costPerUnit ? parseFloat(costPerUnit) : undefined,
-      };
-      if (isNew) {
-        await createInventoryItem(input);
-      } else {
-        await updateInventoryItem(id, input);
+      });
+
+      const originalQuantity = itemQuery.data?.quantity ?? 0;
+      if (newQuantity !== originalQuantity) {
+        await adjustStock({
+          restaurantId,
+          pin: currentPin!,
+          inventoryItemId: id,
+          setAbsolute: newQuantity,
+          reason: 'correction',
+        });
       }
     },
     onSuccess: () => {

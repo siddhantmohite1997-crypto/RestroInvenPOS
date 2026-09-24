@@ -63,7 +63,9 @@ export async function createInventoryItem(input: InventoryItemInput): Promise<st
   return id;
 }
 
-export async function updateInventoryItem(id: string, input: Partial<InventoryItemInput>): Promise<void> {
+export type InventoryItemUpdateInput = Partial<Omit<InventoryItemInput, 'quantity'>>;
+
+export async function updateInventoryItem(id: string, input: InventoryItemUpdateInput): Promise<void> {
   await db
     .update(inventoryItems)
     .set({ ...input, updatedAt: new Date() })
