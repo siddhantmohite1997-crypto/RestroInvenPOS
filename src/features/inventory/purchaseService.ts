@@ -123,7 +123,6 @@ export async function recordSupplierPurchase(input: RecordSupplierPurchaseInput)
         await tx
           .update(inventoryItems)
           .set({
-            quantity: sql`ROUND(${inventoryItems.quantity} + ${line.quantity}, 3)`,
             costPerUnit: line.costPerUnit,
             updatedAt: new Date(),
           })
