@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import { useAuthStore } from '@/store/authStore';
 import { syncNow } from './syncService';
-import { logSyncAttempt } from './syncLogService';
 
 const PERIODIC_SYNC_INTERVAL_MS = 120_000;
 
@@ -29,15 +28,11 @@ export function usePeriodicSync() {
 
     const tick = () => {
       if (appStateRef.current !== 'active') return;
-      syncNow(restaurantId, pin, 'auto').catch((err) => {
-        logSyncAttempt({
-          restaurantId,
-          triggeredBy: 'auto',
-          status: 'error',
-          message: err instanceof Error ? err.message : String(err),
-          startedAt: new Date(),
-        });
-      });
+      // Silent on failure by design (no Alert here, see hook doc comment above). Deliberately
+      // NOT calling logSyncAttempt here: syncNow already logs the attempt internally before
+      // rethrowing (same pattern as useSyncGate's catch block), so logging again here would
+      // double-write a syncLogs row for every single failure. Keep this catch empty.
+      syncNow(restaurantId, pin, 'auto').catch(() => {});
     };
 
     intervalId = setInterval(tick, PERIODIC_SYNC_INTERVAL_MS);
