@@ -265,6 +265,48 @@ async function fetchChangedRows(
   return rows;
 }
 
+/** How many parent ids get inlined into a single PostgREST `in.(...)` filter. A restaurant with
+ * thousands of changed orders would otherwise put thousands of uuids into one URL and get a 414
+ * back from the proxy long before Postgres ever saw the query. */
+const CHILD_PARENT_ID_BATCH_SIZE = 200;
+
+/** Child rows belonging to a set of parent ids -- an order's items/discounts/payments (keyed by
+ * order_id), or an order item's modifiers (keyed by order_item_id, since order_item_modifiers
+ * has no order_id column at all -- see supabase/schema.sql).
+ *
+ * Does two things a bare `.in(parentColumn, parentIds)` does not:
+ *   (a) chunks the id list (URL-length ceiling, see CHILD_PARENT_ID_BATCH_SIZE above), and
+ *   (b) pages each chunk with .range(), exactly like fetchAllRows/fetchChangedRows, because
+ *       PostgREST caps a single response at 1000 rows -- without this, any restaurant with more
+ *       than ~1000 order_items across the pulled orders silently received truncated data with no
+ *       error of any kind.
+ * Unlike the two helpers above it also orders by id: .range() paging without an ORDER BY has no
+ * guaranteed row order between pages, which can duplicate or skip rows across page boundaries. */
+async function fetchChildRowsByParentIds(
+  pgTable: string,
+  parentColumn: string,
+  parentIds: string[],
+): Promise<Record<string, unknown>[]> {
+  const rows: Record<string, unknown>[] = [];
+  for (let i = 0; i < parentIds.length; i += CHILD_PARENT_ID_BATCH_SIZE) {
+    const idsChunk = parentIds.slice(i, i + CHILD_PARENT_ID_BATCH_SIZE);
+    let from = 0;
+    for (;;) {
+      const { data, error } = await supabase
+        .from(pgTable)
+        .select('*')
+        .in(parentColumn, idsChunk)
+        .order('id', { ascending: true })
+        .range(from, from + RESTORE_PAGE_SIZE - 1);
+      if (error) throw error;
+      rows.push(...(data ?? []));
+      if (!data || data.length < RESTORE_PAGE_SIZE) break;
+      from += RESTORE_PAGE_SIZE;
+    }
+  }
+  return rows;
+}
+
 /**
  * Called right after /pair (or standalone, re-authenticated the same way) to pull every row
  * this restaurant has in the cloud back down onto a device that just attached to it — a brand
@@ -660,11 +702,26 @@ app.post('/sync', async (req: Request, res: Response) => {
     const sinceIso = lastPulledAt ?? null;
 
     for (const [jsKey, { table: pgTable }] of Object.entries(TABLE_MAP)) {
+      if (jsKey === 'restaurants') continue; // fetched separately below, keyed by id not restaurant_id
       if (jsKey === 'orders') continue; // handled specially below, with its children
       if ((ORDER_CHILD_TABLES as readonly string[]).includes(jsKey)) continue;
       const timestampColumn = APPEND_ONLY_TABLES.has(jsKey) ? 'created_at' : 'updated_at';
       pulledData[jsKey] = await fetchChangedRows(pgTable, restaurantId, timestampColumn, sinceIso);
     }
+
+    // restaurants is the one table with no restaurant_id column of its own -- it IS the
+    // restaurant record -- so it can't go through fetchChangedRows (which filters on
+    // restaurant_id and would fail with PostgREST 42703 "column does not exist"). Same special
+    // case /restore already makes for it above; fetched by id, still respecting the pull cursor.
+    let restaurantQuery = supabase.from('restaurants').select('*').eq('id', restaurantId);
+    if (sinceIso !== null) {
+      restaurantQuery = restaurantQuery.gt('updated_at', sinceIso);
+    }
+    const { data: restaurantRows, error: restaurantPullError } = await restaurantQuery;
+    if (restaurantPullError) throw restaurantPullError;
+    // Possibly empty (unchanged since the cursor) -- the client applies it as an ordinary
+    // last-write-wins row, so an empty array simply means "nothing to adopt this tick".
+    pulledData.restaurants = restaurantRows ?? [];
 
     // Orders: find which orders changed, then pull ALL current rows of their four child tables
     // for exactly those orders -- never filtered by the children's own timestamps, matching how
@@ -674,16 +731,33 @@ app.post('/sync', async (req: Request, res: Response) => {
     pulledData.orders = changedOrders;
     const changedOrderIds = changedOrders.map((o) => o.id as string);
 
-    for (const jsKey of ORDER_CHILD_TABLES) {
-      const pgTable = TABLE_MAP[jsKey].table;
-      if (changedOrderIds.length === 0) {
-        pulledData[jsKey] = [];
-        continue;
-      }
-      const { data, error } = await supabase.from(pgTable).select('*').in('order_id', changedOrderIds);
-      if (error) throw error;
-      pulledData[jsKey] = data ?? [];
-    }
+    // Three of the four child tables hang off order_id and can be fetched straight from the
+    // changed order ids. order_item_modifiers CANNOT: the cloud table has no order_id column at
+    // all (see supabase/schema.sql -- it's keyed by order_item_id only), so querying it by
+    // order_id threw PostgREST 42703 and 500'd every /sync that pulled an order with modifiers.
+    // It therefore has to run AFTER order_items, keyed by the ids those rows just returned.
+    // All four go through fetchChildRowsByParentIds for batching + .range() paging (see there).
+    const orderItemRows = await fetchChildRowsByParentIds(
+      TABLE_MAP.orderItems.table,
+      'order_id',
+      changedOrderIds,
+    );
+    pulledData.orderItems = orderItemRows;
+    pulledData.discounts = await fetchChildRowsByParentIds(
+      TABLE_MAP.discounts.table,
+      'order_id',
+      changedOrderIds,
+    );
+    pulledData.payments = await fetchChildRowsByParentIds(
+      TABLE_MAP.payments.table,
+      'order_id',
+      changedOrderIds,
+    );
+    pulledData.orderItemModifiers = await fetchChildRowsByParentIds(
+      TABLE_MAP.orderItemModifiers.table,
+      'order_item_id',
+      orderItemRows.map((i) => i.id as string),
+    );
 
     const newPulledAt = serverNow.toISOString();
 
