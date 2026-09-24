@@ -3,6 +3,7 @@ import { FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } fr
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRestaurantId } from '@/features/auth/useRestaurantId';
+import { useAuthStore } from '@/store/authStore';
 import { listCategories } from '@/features/menu/categoryService';
 import { listItems, type MenuItem } from '@/features/menu/itemService';
 import { getModifierGroupsForItem } from '@/features/menu/modifierService';
@@ -17,6 +18,7 @@ export default function OrderItemPickerScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const restaurantId = useRestaurantId();
+  const currentPin = useAuthStore((s) => s.currentPin);
   const queryClient = useQueryClient();
 
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
@@ -85,7 +87,14 @@ export default function OrderItemPickerScreen() {
   const invalidateOrder = () => queryClient.invalidateQueries({ queryKey: ['order', id] });
 
   const quickAddMutation = useMutation({
-    mutationFn: (menuItem: MenuItem) => addItemToOrder(id, { menuItemId: menuItem.id, quantity: 1 }),
+    mutationFn: (menuItem: MenuItem) => {
+      if (!currentPin) throw new Error('Please log out and back in, then try again.');
+      return addItemToOrder(
+        id,
+        { menuItemId: menuItem.id, quantity: 1 },
+        { restaurantId, pin: currentPin },
+      );
+    },
     onSuccess: invalidateOrder,
   });
 

@@ -1,6 +1,8 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuthStore } from '@/store/authStore';
+import { useRestaurantId } from '@/features/auth/useRestaurantId';
 import {
   clearBillDiscount,
   getOrder,
@@ -14,6 +16,8 @@ export default function CartScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const restaurantId = useRestaurantId();
+  const currentPin = useAuthStore((s) => s.currentPin);
 
   const orderQuery = useQuery({ queryKey: ['order', id], queryFn: () => getOrder(id) });
   const order = orderQuery.data;
@@ -21,8 +25,13 @@ export default function CartScreen() {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['order', id] });
 
   const quantityMutation = useMutation({
-    mutationFn: ({ itemId, quantity }: { itemId: string; quantity: number }) =>
-      quantity <= 0 ? removeItemFromOrder(itemId) : updateItemQuantity(itemId, quantity),
+    mutationFn: ({ itemId, quantity }: { itemId: string; quantity: number }) => {
+      if (!currentPin) throw new Error('Please log out and back in, then try again.');
+      const context = { restaurantId, pin: currentPin };
+      return quantity <= 0
+        ? removeItemFromOrder(itemId, context)
+        : updateItemQuantity(itemId, quantity, context);
+    },
     onSuccess: invalidate,
   });
 

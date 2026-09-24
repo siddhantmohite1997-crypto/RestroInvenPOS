@@ -1,7 +1,9 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { inventoryItems, recipeIngredients } from '@/db/schema';
 import { generateId } from '@/lib/id';
+import { adjustStock } from './stockAdjustmentService';
+import { round2 } from '@/features/tax/taxEngine';
 
 export type InventoryItem = typeof inventoryItems.$inferSelect;
 export type RecipeIngredient = typeof recipeIngredients.$inferSelect;
@@ -164,30 +166,42 @@ export async function countIngredientsByMenuItem(restaurantId: string): Promise<
   return counts;
 }
 
-/** Applies quantityDelta servings of menuItemId's recipe to inventory: subtracts
- * quantityRequired * quantityDelta from each linked ingredient. No-op for an unlinked menu
- * item (or one with no menuItemId, e.g. a combo). Never blocks on insufficient stock — a
- * negative resulting quantity is the low-stock signal itself, not an error to suppress. */
-export async function consumeIngredients(menuItemId: string | null | undefined, quantityDelta: number): Promise<void> {
+export interface ConsumeContext {
+  restaurantId: string;
+  pin: string;
+}
+
+/** Applies quantityDelta servings of menuItemId's recipe to inventory, and attempts to reach
+ * the server live for each affected item (queuing on failure) -- see adjustStock() in
+ * stockAdjustmentService.ts for why quantity changes go through that instead of a plain local
+ * write. `context` carries what adjustStock needs to reach the server; callers already have
+ * both values from the logged-in session (see call sites in orderService.ts / cart.tsx). */
+export async function consumeIngredients(
+  menuItemId: string | null | undefined,
+  quantityDelta: number,
+  context: ConsumeContext,
+): Promise<void> {
   if (!menuItemId || quantityDelta === 0) return;
   const rows = await db.query.recipeIngredients.findMany({
     where: (r, { and, eq: eqOp }) => and(eqOp(r.menuItemId, menuItemId), eqOp(r.isActive, true)),
   });
   for (const row of rows) {
-    // Rounded to 3dp (matching the NUMERIC(10,3) column in Supabase) at write time, not just
-    // on display — floating-point subtraction alone leaves artifacts like 9.400000000000002
-    // that would otherwise accumulate further with every subsequent order.
-    await db
-      .update(inventoryItems)
-      .set({
-        quantity: sql`ROUND(${inventoryItems.quantity} - ${row.quantityRequired * quantityDelta}, 3)`,
-        updatedAt: new Date(),
-      })
-      .where(eq(inventoryItems.id, row.inventoryItemId));
+    const delta = round2(-row.quantityRequired * quantityDelta);
+    await adjustStock({
+      restaurantId: context.restaurantId,
+      pin: context.pin,
+      inventoryItemId: row.inventoryItemId,
+      delta,
+      reason: quantityDelta > 0 ? 'sale' : 'sale-void',
+    });
   }
 }
 
 /** Inverse of consumeIngredients — restores quantityDelta servings' worth of ingredients. */
-export async function restoreIngredients(menuItemId: string | null | undefined, quantityDelta: number): Promise<void> {
-  await consumeIngredients(menuItemId, -quantityDelta);
+export async function restoreIngredients(
+  menuItemId: string | null | undefined,
+  quantityDelta: number,
+  context: ConsumeContext,
+): Promise<void> {
+  await consumeIngredients(menuItemId, -quantityDelta, context);
 }

@@ -17,12 +17,20 @@ export default function CancelOrderScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const currentUser = useAuthStore((s) => s.currentUser)!;
+  const currentPin = useAuthStore((s) => s.currentPin);
   const restaurantId = useRestaurantId();
 
   const [reason, setReason] = useState('');
 
   const cancelMutation = useMutation({
-    mutationFn: () => cancelOrder(id, { staffId: currentUser.id, reason: reason.trim() }),
+    mutationFn: () => {
+      if (!currentPin) throw new Error('Please log out and back in, then try again.');
+      return cancelOrder(
+        id,
+        { staffId: currentUser.id, reason: reason.trim() },
+        { restaurantId, pin: currentPin },
+      );
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['openOrders', restaurantId] });
       queryClient.invalidateQueries({ queryKey: ['parkedOrders', restaurantId] });
