@@ -69,12 +69,42 @@ const APPEND_ONLY_TABLES: { key: string; table: SQLiteTable }[] = [
   { key: 'auditLogs', table: auditLogs },
 ];
 
-const ORDER_CHILD_TABLES: { key: string; table: SQLiteTable }[] = [
+/** Order children that carry their own order_id and are therefore gated directly on which
+ * orders were applied. orderItemModifiers is deliberately NOT in this list: the cloud
+ * order_item_modifiers table has no order_id column at all (it's keyed by order_item_id only --
+ * see supabase/schema.sql), so it's applied separately below, gated on the order-item ids this
+ * same pull just applied. orderItems stays first: order_item_modifiers and discounts both have
+ * FKs into it. */
+const ORDER_CHILD_TABLES_BY_ORDER_ID: { key: string; table: SQLiteTable }[] = [
   { key: 'orderItems', table: orderItems },
-  { key: 'orderItemModifiers', table: orderItemModifiers },
   { key: 'discounts', table: discounts },
   { key: 'payments', table: payments },
 ];
+
+/** Applies one table's pulled rows, naming the table and the offending row id if anything
+ * throws. Without this, an FK-ordering mistake anywhere in applyPulledData surfaces only as a
+ * bare SQLite "FOREIGN KEY constraint failed" that rolls back the entire pull transaction --
+ * and since setLastPulledAt is never reached after a rollback, the device retries the identical
+ * failing payload forever. Logging which table and row did it makes that diagnosable from a log
+ * instead of only from a code read. Still rethrows: a partially-applied pull must not commit. */
+async function applyRowsLogged(
+  key: string,
+  rows: unknown[],
+  apply: (rawRow: Record<string, unknown>) => Promise<void>,
+): Promise<void> {
+  for (const row of rows) {
+    const rawRow = row as Record<string, unknown>;
+    try {
+      await apply(rawRow);
+    } catch (err) {
+      console.error(
+        `applyPulledData: failed applying ${key} row id=${String(rawRow.id ?? '(none)')}`,
+        err,
+      );
+      throw err;
+    }
+  }
+}
 
 async function applyLastWriteWinsRow(tx: Tx, table: SQLiteTable, row: Record<string, unknown>): Promise<void> {
   const converted = snakeRowToDrizzle(table, row);
@@ -110,22 +140,24 @@ async function applyAppendOnlyRow(tx: Tx, table: SQLiteTable, row: Record<string
  * last-write-wins loop; orders and its four child tables are handled together, since a child
  * row is only ever meaningful alongside the order version it belongs to. */
 export async function applyPulledData(tx: Tx, pulledData: Record<string, unknown[]>): Promise<void> {
-  const restaurantRows = pulledData.restaurants ?? [];
-  for (const row of restaurantRows) {
-    await applyLastWriteWinsRow(tx, restaurants, row as Record<string, unknown>);
-  }
+  await applyRowsLogged('restaurants', pulledData.restaurants ?? [], (rawRow) =>
+    applyLastWriteWinsRow(tx, restaurants, rawRow),
+  );
 
-  for (const { key, table } of LAST_WRITE_WINS_TABLES) {
-    for (const row of pulledData[key] ?? []) {
-      await applyLastWriteWinsRow(tx, table, row as Record<string, unknown>);
-    }
-  }
-
-  // inventoryItems: every column except quantity follows the normal last-write-wins rule;
-  // quantity itself is always adopted from the server, since POST /inventory/adjust-stock has
-  // made the server the sole authority for it (see the spec's Part 2).
-  for (const row of pulledData.inventoryItems ?? []) {
-    const converted = snakeRowToDrizzle(inventoryItems, row as Record<string, unknown>);
+  // inventoryItems runs HERE, before the last-write-wins loop below, and the order is load
+  // bearing: recipe_ingredients.inventory_item_id is a NOT NULL FK into inventory_items and
+  // this app runs with PRAGMA foreign_keys = ON (see src/db/client.ts), so a pull batch that
+  // carries both a brand-new inventory item and a brand-new recipe ingredient pointing at it
+  // used to blow up on the FK, roll back the WHOLE pull transaction, never reach
+  // setLastPulledAt, and then retry the identical failing payload on every tick forever.
+  // inventory_items itself only references restaurants (applied just above), so it is FK-safe
+  // in this position. Don't move it back down.
+  //
+  // Merge rule: every column except quantity follows the normal last-write-wins rule; quantity
+  // itself is always adopted from the server, since POST /inventory/adjust-stock has made the
+  // server the sole authority for it (see the spec's Part 2).
+  await applyRowsLogged('inventoryItems', pulledData.inventoryItems ?? [], async (rawRow) => {
+    const converted = snakeRowToDrizzle(inventoryItems, rawRow);
     const id = converted.id as string;
     const incomingUpdatedAt = converted.updatedAt as Date;
 
@@ -137,7 +169,7 @@ export async function applyPulledData(tx: Tx, pulledData: Record<string, unknown
 
     if (existing.length === 0) {
       await tx.insert(inventoryItems).values(converted as any).onConflictDoNothing();
-      continue;
+      return;
     }
 
     const localUpdatedAt = existing[0].updatedAt;
@@ -149,51 +181,55 @@ export async function applyPulledData(tx: Tx, pulledData: Record<string, unknown
       // Local edit to some OTHER field (name, category, ...) is newer and wins for those
       // columns, but quantity still adopts the server's authoritative number.
       await tx.update(inventoryItems).set({ quantity }).where(eq(inventoryItems.id, id));
-      continue;
+      return;
     }
 
     const { id: _id, ...setFields } = converted;
     await tx.update(inventoryItems).set(setFields).where(eq(inventoryItems.id, id));
+  });
+
+  for (const { key, table } of LAST_WRITE_WINS_TABLES) {
+    await applyRowsLogged(key, pulledData[key] ?? [], (rawRow) =>
+      applyLastWriteWinsRow(tx, table, rawRow),
+    );
   }
 
   for (const { key, table } of APPEND_ONLY_TABLES) {
-    for (const row of pulledData[key] ?? []) {
-      await applyAppendOnlyRow(tx, table, row as Record<string, unknown>);
-    }
+    await applyRowsLogged(key, pulledData[key] ?? [], (rawRow) =>
+      applyAppendOnlyRow(tx, table, rawRow),
+    );
   }
 
   // orders: last-write-wins decides whether to apply each order; if it applies, ALL of that
   // order's current children replace whatever this device has for it, matching how the push
   // side already resends an order's children in full whenever the order itself is dirty rather
   // than diffing them individually.
-  const orderRows = pulledData.orders ?? [];
   const appliedOrderIds = new Set<string>();
-  for (const row of orderRows) {
-    const converted = snakeRowToDrizzle(orders, row as Record<string, unknown>);
+  await applyRowsLogged('orders', pulledData.orders ?? [], async (rawRow) => {
+    const converted = snakeRowToDrizzle(orders, rawRow);
     const id = converted.id as string;
     const incomingUpdatedAt = converted.updatedAt as Date;
 
     const existing = await tx.select({ updatedAt: orders.updatedAt }).from(orders).where(eq(orders.id, id)).limit(1);
     const localUpdatedAt = existing.length > 0 ? existing[0].updatedAt : null;
-    if (!shouldApplyIncoming(localUpdatedAt, incomingUpdatedAt)) continue;
+    if (!shouldApplyIncoming(localUpdatedAt, incomingUpdatedAt)) return;
 
     const { id: _id, ...setFields } = converted;
     await tx.insert(orders).values(converted as any).onConflictDoUpdate({ target: orders.id, set: setFields });
     appliedOrderIds.add(id);
-  }
+  });
 
-  for (const { key, table } of ORDER_CHILD_TABLES) {
-    for (const row of pulledData[key] ?? []) {
-      const rawRow = row as Record<string, unknown>;
-      // Read order_id off the RAW (snake_case) pulled row, not the converted one: the cloud
-      // order_item_modifiers table carries order_id purely so the server's pull query can do
-      // `.in('order_id', changedOrderIds)` (see api/src/index.ts), but the local
-      // orderItemModifiers schema has no orderId column at all (it only has orderItemId) --
-      // snakeRowToDrizzle silently drops any cloud column with no local counterpart, so
-      // converted.orderId would always be undefined here and no orderItemModifiers row would
-      // ever pass the appliedOrderIds gate below.
+  // Ids of the order_items this pull actually applied -- the gate for order_item_modifiers
+  // below, which has no order_id of its own to be gated on.
+  const appliedOrderItemIds = new Set<string>();
+
+  for (const { key, table } of ORDER_CHILD_TABLES_BY_ORDER_ID) {
+    await applyRowsLogged(key, pulledData[key] ?? [], async (rawRow) => {
+      // Read order_id off the RAW (snake_case) pulled row, not the converted one -- these three
+      // tables all carry it in the cloud, and snakeRowToDrizzle would only preserve it for
+      // tables that also have a local orderId column.
       const orderId = rawRow.order_id as string | undefined;
-      if (!orderId || !appliedOrderIds.has(orderId)) continue;
+      if (!orderId || !appliedOrderIds.has(orderId)) return;
 
       const converted = snakeRowToDrizzle(table, rawRow);
       const { id: _id, ...setFields } = converted;
@@ -201,6 +237,25 @@ export async function applyPulledData(tx: Tx, pulledData: Record<string, unknown
         .insert(table)
         .values(converted as any)
         .onConflictDoUpdate({ target: (table as unknown as { id: AnySQLiteColumn }).id, set: setFields });
-    }
+      if (key === 'orderItems') appliedOrderItemIds.add(converted.id as string);
+    });
   }
+
+  // orderItemModifiers is gated on order_item_id, NOT order_id: the cloud order_item_modifiers
+  // table has no order_id column at all (supabase/schema.sql keys it by order_item_id only), so
+  // the previous `rawRow.order_id` gate here read undefined on every row and silently dropped
+  // every pulled modifier. Gating on the order-item ids applied just above is equivalent in
+  // intent (a modifier is only meaningful alongside the order-item version it belongs to) and
+  // also guarantees its NOT NULL FK into order_items is satisfied.
+  await applyRowsLogged('orderItemModifiers', pulledData.orderItemModifiers ?? [], async (rawRow) => {
+    const orderItemId = rawRow.order_item_id as string | undefined;
+    if (!orderItemId || !appliedOrderItemIds.has(orderItemId)) return;
+
+    const converted = snakeRowToDrizzle(orderItemModifiers, rawRow);
+    const { id: _id, ...setFields } = converted;
+    await tx
+      .insert(orderItemModifiers)
+      .values(converted as any)
+      .onConflictDoUpdate({ target: orderItemModifiers.id, set: setFields });
+  });
 }
