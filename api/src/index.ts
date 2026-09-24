@@ -512,6 +512,52 @@ app.post('/sync', async (req: Request, res: Response) => {
         return jsKey === 'restaurants' ? snakeRow : { ...snakeRow, restaurant_id: restaurantId };
       });
 
+      if (jsKey === 'inventoryItems') {
+        // quantity is server-authoritative (see POST /inventory/adjust-stock) -- a plain
+        // upsert here would either silently overwrite a more current server value with a
+        // stale local one, or fail outright on the NOT NULL constraint if quantity were simply
+        // omitted from an UPDATE payload (Supabase's upsert() does not do a true partial merge
+        // on conflict -- confirmed directly against this database during the staff pin_hash
+        // incident earlier this session). Existing rows get an explicit update that never
+        // mentions quantity; only a genuinely new row (first time this id has ever reached the
+        // server) gets its quantity inserted, establishing the starting value adjustStock()
+        // will apply deltas against from then on.
+        const existingIds = new Set<string>();
+        for (let i = 0; i < snakeRows.length; i += SYNC_BATCH_SIZE) {
+          const idsChunk = snakeRows.slice(i, i + SYNC_BATCH_SIZE).map((r) => r.id as string);
+          const { data: existingRows, error: lookupError } = await supabase
+            .from(pgTable)
+            .select('id')
+            .in('id', idsChunk);
+          if (lookupError) throw lookupError;
+          for (const row of existingRows ?? []) existingIds.add(row.id as string);
+        }
+
+        const newRows = snakeRows.filter((r) => !existingIds.has(r.id as string));
+        const updateRows = snakeRows.filter((r) => existingIds.has(r.id as string));
+
+        for (let i = 0; i < newRows.length; i += SYNC_BATCH_SIZE) {
+          const chunk = newRows.slice(i, i + SYNC_BATCH_SIZE);
+          const { error } = await supabase.from(pgTable).upsert(chunk, { onConflict: conflictTarget });
+          if (error) {
+            console.error(`Error inserting new ${pgTable}:`, error);
+            throw error;
+          }
+        }
+
+        for (const row of updateRows) {
+          const { quantity: _quantity, id, ...updateFields } = row;
+          const { error } = await supabase.from(pgTable).update(updateFields).eq('id', id as string);
+          if (error) {
+            console.error(`Error updating ${pgTable} ${String(id)}:`, error);
+            throw error;
+          }
+        }
+
+        pushedCounts[jsKey] = rows.length;
+        continue;
+      }
+
       for (let i = 0; i < snakeRows.length; i += SYNC_BATCH_SIZE) {
         const chunk = snakeRows.slice(i, i + SYNC_BATCH_SIZE);
         const { error } = await supabase.from(pgTable).upsert(chunk, {
