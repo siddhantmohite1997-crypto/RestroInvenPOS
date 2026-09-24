@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import { useAuthStore } from '@/store/authStore';
+import { flushPendingInventoryDeltas } from '@/features/inventory/stockAdjustmentService';
 import { syncNow } from './syncService';
 
 const PERIODIC_SYNC_INTERVAL_MS = 120_000;
@@ -33,6 +34,11 @@ export function usePeriodicSync() {
       // rethrowing (same pattern as useSyncGate's catch block), so logging again here would
       // double-write a syncLogs row for every single failure. Keep this catch empty.
       syncNow(restaurantId, pin, 'auto').catch(() => {});
+      flushPendingInventoryDeltas(restaurantId, pin).catch(() => {
+        // Individual delta failures are already handled (left queued) inside
+        // flushPendingInventoryDeltas itself -- this catch only guards against something
+        // unexpected in the flush loop itself, so it never takes down the tick.
+      });
     };
 
     intervalId = setInterval(tick, PERIODIC_SYNC_INTERVAL_MS);
