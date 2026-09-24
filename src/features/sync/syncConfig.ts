@@ -18,6 +18,10 @@ function lastAutoSyncDateKey(restaurantId: string) {
   return `pos:sync:lastAutoSyncDate:${restaurantId}`;
 }
 
+function lastPulledKey(restaurantId: string) {
+  return `pos:sync:lastPulledAt:${restaurantId}`;
+}
+
 export async function getLastSyncedAt(restaurantId: string): Promise<Date | null> {
   const raw = await AsyncStorage.getItem(lastSyncedKey(restaurantId));
   return raw ? new Date(Number(raw)) : null;
@@ -25,6 +29,15 @@ export async function getLastSyncedAt(restaurantId: string): Promise<Date | null
 
 export async function setLastSyncedAt(restaurantId: string, when: Date): Promise<void> {
   await AsyncStorage.setItem(lastSyncedKey(restaurantId), String(when.getTime()));
+}
+
+export async function getLastPulledAt(restaurantId: string): Promise<Date | null> {
+  const raw = await AsyncStorage.getItem(lastPulledKey(restaurantId));
+  return raw ? new Date(Number(raw)) : null;
+}
+
+export async function setLastPulledAt(restaurantId: string, when: Date): Promise<void> {
+  await AsyncStorage.setItem(lastPulledKey(restaurantId), String(when.getTime()));
 }
 
 export async function getSyncMode(restaurantId: string): Promise<SyncMode> {
