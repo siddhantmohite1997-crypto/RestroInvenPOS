@@ -123,3 +123,27 @@ export const recipeIngredients = sqliteTable('recipe_ingredients', {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+/** Local-only outbox for inventory-quantity changes that couldn't reach the server
+ * immediately (offline, timeout, server error) -- see adjustStock() in
+ * src/features/inventory/stockAdjustmentService.ts. Never part of TABLE_MAP, never
+ * pushed or pulled as a regular synced row: this table's whole purpose is retrying
+ * against POST /inventory/adjust-stock until it succeeds, then it's done. Exactly one
+ * of delta/setAbsolute is set per row, matching adjustStock()'s own two operation
+ * shapes (a relative change vs. a stocktake correction). */
+export const pendingInventoryDeltas = sqliteTable('pending_inventory_deltas', {
+  id: text('id').primaryKey(),
+  restaurantId: text('restaurant_id')
+    .notNull()
+    .references(() => restaurants.id),
+  inventoryItemId: text('inventory_item_id')
+    .notNull()
+    .references(() => inventoryItems.id),
+  delta: real('delta'),
+  setAbsolute: real('set_absolute'),
+  reason: text('reason').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  syncedAt: integer('synced_at', { mode: 'timestamp_ms' }),
+});
