@@ -409,6 +409,83 @@ app.post('/staff', async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// INVENTORY ADJUST-STOCK ENDPOINT
+// ============================================================================
+
+/**
+ * Applies an atomic, server-authoritative change to one inventory item's quantity -- either a
+ * relative delta (a sale, a restock) or an absolute set (a stocktake correction). Never accepts
+ * a client's snapshot of the current quantity: the whole point is that two devices calling this
+ * concurrently for the same item both land correctly regardless of arrival order, which a
+ * client-computed "new total" could never guarantee. Exactly one of delta/setAbsolute must be
+ * provided. See src/features/inventory/stockAdjustmentService.ts for the client side (always
+ * applies locally first, calls this live when online, queues it otherwise).
+ */
+app.post('/inventory/adjust-stock', async (req: Request, res: Response) => {
+  try {
+    const { restaurantId, pin, inventoryItemId, delta, setAbsolute, reason } = req.body as {
+      restaurantId?: string;
+      pin?: string;
+      inventoryItemId?: string;
+      delta?: number;
+      setAbsolute?: number;
+      reason?: string;
+    };
+
+    if (!restaurantId || !pin || !inventoryItemId || !reason) {
+      return res
+        .status(400)
+        .json({ error: 'restaurantId, pin, inventoryItemId, and reason required' });
+    }
+    if ((delta === undefined) === (setAbsolute === undefined)) {
+      return res.status(400).json({ error: 'Exactly one of delta or setAbsolute is required' });
+    }
+
+    const auth = await verifyPinAuth(restaurantId, pin);
+    if (!auth.valid) {
+      return res.status(401).json({ error: auth.reason || 'Authentication failed' });
+    }
+
+    if (setAbsolute !== undefined) {
+      const { data, error } = await supabase
+        .from('inventory_items')
+        .update({ quantity: setAbsolute, updated_at: new Date().toISOString() })
+        .eq('id', inventoryItemId)
+        .eq('restaurant_id', restaurantId)
+        .select('quantity')
+        .single();
+      if (error) {
+        console.error(`adjust-stock (set) failed for ${inventoryItemId}:`, error);
+        return res.status(500).json({ error: error.message });
+      }
+      return res.json({ quantity: data.quantity });
+    }
+
+    // Postgres computes the new value from its own current row in one atomic statement --
+    // two concurrent calls for the same item both apply correctly regardless of which the
+    // database processes first, since neither ever reads-then-writes a stale snapshot.
+    const { data, error } = await supabase.rpc('adjust_inventory_quantity', {
+      p_inventory_item_id: inventoryItemId,
+      p_restaurant_id: restaurantId,
+      p_delta: delta,
+    });
+    if (error) {
+      console.error(`adjust-stock (delta) failed for ${inventoryItemId}:`, error);
+      return res.status(500).json({ error: error.message });
+    }
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'Inventory item not found' });
+    }
+    res.json({ quantity: data[0].new_quantity });
+  } catch (err) {
+    console.error('Adjust-stock error:', err);
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Adjust stock failed',
+    });
+  }
+});
+
+// ============================================================================
 // SYNC ENDPOINT
 // ============================================================================
 
