@@ -18,6 +18,10 @@ export function usePeriodicSync() {
   const restaurant = useAuthStore((s) => s.restaurant);
   const currentPin = useAuthStore((s) => s.currentPin);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  /** Guards against a tick that outlives its own interval overlapping the next one -- two
+   * concurrent db.transaction calls on the same SQLite connection. Realistic whenever a pull is
+   * large (a device's first pull after upgrading, say), and cheap to prevent. */
+  const inFlightRef = useRef(false);
 
   useEffect(() => {
     if (!currentUser || !restaurant || !currentPin) return;
@@ -27,21 +31,33 @@ export function usePeriodicSync() {
 
     let intervalId: ReturnType<typeof setInterval> | null = null;
 
-    const tick = () => {
-      if (appStateRef.current !== 'active') return;
-      // Silent on failure by design (no Alert here, see hook doc comment above). Deliberately
-      // NOT calling logSyncAttempt here: syncNow already logs the attempt internally before
-      // rethrowing (same pattern as useSyncGate's catch block), so logging again here would
-      // double-write a syncLogs row for every single failure. Keep this catch empty.
-      syncNow(restaurantId, pin, 'auto').catch(() => {});
-      flushPendingInventoryDeltas(restaurantId, pin).catch(() => {
-        // Individual delta failures are already handled (left queued) inside
-        // flushPendingInventoryDeltas itself -- this catch only guards against something
-        // unexpected in the flush loop itself, so it never takes down the tick.
-      });
+    const tick = async () => {
+      if (appStateRef.current !== 'active' || inFlightRef.current) return;
+      inFlightRef.current = true;
+      try {
+        // Flush FIRST, then sync -- sequentially, never racing. The pull half of syncNow adopts
+        // the server's quantity for every inventory item unconditionally, so if it lands before
+        // this device's queued deltas reach the server, it adopts a value the server is about to
+        // change and the till visibly reverts to a stale number until the next cycle corrects
+        // it. Delivering the deltas first makes the server's data current before anything is
+        // pulled from it, so the pull gets the right value on its first attempt.
+        //
+        // Both catches are silent by design (no Alert here, see the hook doc comment above).
+        // Individual delta failures are already handled -- left queued -- inside
+        // flushPendingInventoryDeltas itself. And deliberately NO logSyncAttempt around syncNow:
+        // it already logs the attempt internally before rethrowing (same pattern as useSyncGate's
+        // catch block), so logging again here would double-write a syncLogs row for every single
+        // failure. Keep both catches empty.
+        await flushPendingInventoryDeltas(restaurantId, pin).catch(() => {});
+        await syncNow(restaurantId, pin, 'auto').catch(() => {});
+      } finally {
+        inFlightRef.current = false;
+      }
     };
 
-    intervalId = setInterval(tick, PERIODIC_SYNC_INTERVAL_MS);
+    // tick is async now but can never reject (both awaits are caught, the finally can't throw),
+    // so firing it without awaiting is safe -- `void` just makes that explicit.
+    intervalId = setInterval(() => void tick(), PERIODIC_SYNC_INTERVAL_MS);
 
     const subscription = AppState.addEventListener('change', (nextState) => {
       appStateRef.current = nextState;
