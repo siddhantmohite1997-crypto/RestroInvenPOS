@@ -717,12 +717,7 @@ app.post('/sync', async (req: Request, res: Response) => {
     // Uncursored on purpose: the cloud `staff` table has no updated_at column at all (see
     // supabase/schema.sql -- only created_at), so it cannot be filtered incrementally like every
     // other table here. It is a handful of rows per restaurant, so refetching it is cheap.
-    const { data: staffRows, error: staffPullError } = await supabase
-      .from('staff')
-      .select('*')
-      .eq('restaurant_id', restaurantId);
-    if (staffPullError) throw staffPullError;
-    pulledData.staff = staffRows ?? [];
+    pulledData.staff = await fetchAllRows('staff', restaurantId);
 
     for (const [jsKey, { table: pgTable }] of Object.entries(TABLE_MAP)) {
       if (jsKey === 'restaurants') continue; // fetched separately below, keyed by id not restaurant_id
