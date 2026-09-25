@@ -95,7 +95,7 @@ export async function pairWithRestaurant(input: PairInput): Promise<PairResult> 
       tables_enabled: boolean;
       rounding_rule: 'none' | 'nearest_1' | 'nearest_0_5' | 'nearest_5';
     };
-    staff: { id: string; name: string; role: 'owner' | 'admin' | 'cashier' };
+    staff: { id: string; name: string; role: 'owner' | 'admin' | 'cashier' | null };
   };
 
   const restaurantRow = {
@@ -149,7 +149,7 @@ export async function pairWithRestaurant(input: PairInput): Promise<PairResult> 
     name: staff.name,
     pinHash,
     pinSalt: salt,
-    role: staff.role,
+    role: staff.role ?? 'cashier',
     isActive: true,
   });
 
@@ -197,7 +197,7 @@ export interface RestoreResult {
 interface CloudStaffRow {
   id: string;
   name: string;
-  role: 'owner' | 'admin' | 'cashier';
+  role: 'owner' | 'admin' | 'cashier' | null;
   pin_hash: string;
 }
 
@@ -260,7 +260,7 @@ export async function restoreFromCloud(
             pinHash,
             pinSalt,
             cloudPinHash: s.pin_hash,
-            role: s.role,
+            role: s.role ?? 'cashier',
             // No is_active column on the cloud staff table (no soft-delete there) --
             // every restored staff row is treated as active.
             isActive: true,
