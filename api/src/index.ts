@@ -222,16 +222,16 @@ const RESTORE_PAGE_SIZE = 1000;
 async function fetchAllRows(
   pgTable: string,
   restaurantId: string,
+  orderColumns: string[] = ['id'],
 ): Promise<Record<string, unknown>[]> {
   const rows: Record<string, unknown>[] = [];
   let from = 0;
   for (;;) {
-    const { data, error } = await supabase
-      .from(pgTable)
-      .select('*')
-      .eq('restaurant_id', restaurantId)
-      .order('id', { ascending: true })
-      .range(from, from + RESTORE_PAGE_SIZE - 1);
+    let query = supabase.from(pgTable).select('*').eq('restaurant_id', restaurantId);
+    for (const col of orderColumns) {
+      query = query.order(col, { ascending: true });
+    }
+    const { data, error } = await query.range(from, from + RESTORE_PAGE_SIZE - 1);
     if (error) throw error;
     rows.push(...(data ?? []));
     if (!data || data.length < RESTORE_PAGE_SIZE) break;
@@ -249,6 +249,7 @@ async function fetchChangedRows(
   restaurantId: string,
   timestampColumn: 'updated_at' | 'created_at',
   sinceIso: string | null,
+  orderColumns: string[] = ['id'],
 ): Promise<Record<string, unknown>[]> {
   const rows: Record<string, unknown>[] = [];
   let from = 0;
@@ -257,9 +258,10 @@ async function fetchChangedRows(
     if (sinceIso !== null) {
       query = query.gt(timestampColumn, sinceIso);
     }
-    const { data, error } = await query
-      .order('id', { ascending: true })
-      .range(from, from + RESTORE_PAGE_SIZE - 1);
+    for (const col of orderColumns) {
+      query = query.order(col, { ascending: true });
+    }
+    const { data, error } = await query.range(from, from + RESTORE_PAGE_SIZE - 1);
     if (error) throw error;
     rows.push(...(data ?? []));
     if (!data || data.length < RESTORE_PAGE_SIZE) break;
@@ -354,9 +356,12 @@ app.post('/restore', async (req: Request, res: Response) => {
     }
 
     const data: Record<string, Record<string, unknown>[]> = {};
-    for (const [jsKey, { table: pgTable }] of Object.entries(TABLE_MAP)) {
+    for (const [jsKey, { table: pgTable, conflictTarget }] of Object.entries(TABLE_MAP)) {
       if (jsKey === 'restaurants') continue; // fetched separately below, keyed by id not restaurant_id
-      data[jsKey] = await fetchAllRows(pgTable, restaurantId);
+      // Order by the table's own conflict target -- 'id' for every table except
+      // menuItemModifierGroups, whose composite ('menu_item_id,modifier_group_id') key has no
+      // 'id' column at all. Ordering by a non-existent column is a 42703 from PostgREST.
+      data[jsKey] = await fetchAllRows(pgTable, restaurantId, conflictTarget.split(','));
     }
 
     res.json({ staff: staff ?? [], data });
@@ -719,12 +724,20 @@ app.post('/sync', async (req: Request, res: Response) => {
     // other table here. It is a handful of rows per restaurant, so refetching it is cheap.
     pulledData.staff = await fetchAllRows('staff', restaurantId);
 
-    for (const [jsKey, { table: pgTable }] of Object.entries(TABLE_MAP)) {
+    for (const [jsKey, { table: pgTable, conflictTarget }] of Object.entries(TABLE_MAP)) {
       if (jsKey === 'restaurants') continue; // fetched separately below, keyed by id not restaurant_id
       if (jsKey === 'orders') continue; // handled specially below, with its children
       if ((ORDER_CHILD_TABLES as readonly string[]).includes(jsKey)) continue;
       const timestampColumn = APPEND_ONLY_TABLES.has(jsKey) ? 'created_at' : 'updated_at';
-      pulledData[jsKey] = await fetchChangedRows(pgTable, restaurantId, timestampColumn, sinceIso);
+      // Order by the table's own conflict target -- see the identical comment in /restore above;
+      // menuItemModifierGroups has no 'id' column, only its composite conflict-target columns.
+      pulledData[jsKey] = await fetchChangedRows(
+        pgTable,
+        restaurantId,
+        timestampColumn,
+        sinceIso,
+        conflictTarget.split(','),
+      );
     }
 
     // restaurants is the one table with no restaurant_id column of its own -- it IS the
