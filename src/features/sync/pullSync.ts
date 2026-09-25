@@ -24,7 +24,10 @@ import {
   payments,
   auditLogs,
   restaurants,
+  users,
 } from '@/db/schema';
+import { generateId } from '@/lib/id';
+import { createSalt, hashPin } from '@/features/auth/pin';
 import { snakeRowToDrizzle } from './rowConversion';
 
 /** true if the incoming row should replace what's stored locally: nothing stored yet, or the
@@ -129,6 +132,70 @@ async function applyLastWriteWinsRow(tx: Tx, table: SQLiteTable, row: Record<str
   await tx.insert(table).values(converted as any).onConflictDoUpdate({ target: (table as unknown as { id: AnySQLiteColumn }).id, set: setFields });
 }
 
+/** One row of the cloud `staff` table as the pull sends it. Mirrors CloudStaffRow in
+ * setupService.ts, which /restore already hands the same shape to. */
+interface PulledStaffRow {
+  id: string;
+  restaurant_id: string;
+  name: string;
+  role: 'owner' | 'admin' | 'cashier' | null;
+  pin_hash: string;
+}
+
+/** Inserts a placeholder local `users` row for every pulled staff id this device doesn't already
+ * have, so the NOT NULL staff FKs on orders/discounts/payments/auditLogs resolve later in this
+ * same pull transaction. Same shape restoreFromCloud() builds for its `otherStaff` rows -- see
+ * the long comment at the call site in applyPulledData for why this never updates an existing
+ * row. */
+async function applyStaffPlaceholders(tx: Tx, rows: unknown[]): Promise<void> {
+  if (rows.length === 0) return;
+
+  const staffRows = rows as PulledStaffRow[];
+  const existing = await tx.select({ id: users.id }).from(users);
+  const knownIds = new Set(existing.map((u) => u.id));
+  const unknown = staffRows.filter((s) => s.id && !knownIds.has(s.id));
+  if (unknown.length === 0) return;
+
+  const placeholderRows = await Promise.all(
+    unknown.map(async (s) => {
+      const pinSalt = await createSalt();
+      // Never matches a real PIN on its own -- this device doesn't know this staff member's
+      // actual PIN. Their real first login here goes through the cloudPinHash bridge (see
+      // tryCloudPinFallback in authService.ts), which then replaces this placeholder with a
+      // proper salted hash.
+      const pinHash = await hashPin(generateId(), pinSalt);
+      return {
+        id: s.id,
+        restaurantId: s.restaurant_id,
+        name: s.name,
+        pinHash,
+        pinSalt,
+        cloudPinHash: s.pin_hash,
+        // The cloud column is nullable (DEFAULT 'cashier', see supabase/schema.sql) while the
+        // local one is NOT NULL -- fall back rather than letting a null role NULL-constraint the
+        // pull into the exact retry-forever loop this whole block exists to prevent.
+        role: s.role ?? ('cashier' as const),
+        // No is_active column on the cloud staff table (no soft-delete there) -- every pulled
+        // staff row is treated as active, same reasoning restoreFromCloud uses.
+        isActive: true,
+      };
+    }),
+  );
+
+  // One batched insert for the whole set, like restoreFromCloud does, rather than one per row.
+  try {
+    await tx.insert(users).values(placeholderRows).onConflictDoNothing();
+  } catch (err) {
+    console.error(
+      `applyPulledData: failed inserting staff placeholder rows ids=${placeholderRows
+        .map((r) => r.id)
+        .join(',')}`,
+      err,
+    );
+    throw err;
+  }
+}
+
 async function applyAppendOnlyRow(tx: Tx, table: SQLiteTable, row: Record<string, unknown>): Promise<void> {
   const converted = snakeRowToDrizzle(table, row);
   await tx.insert(table).values(converted as any).onConflictDoNothing();
@@ -143,6 +210,27 @@ export async function applyPulledData(tx: Tx, pulledData: Record<string, unknown
   await applyRowsLogged('restaurants', pulledData.restaurants ?? [], (rawRow) =>
     applyLastWriteWinsRow(tx, restaurants, rawRow),
   );
+
+  // staff runs SECOND, right after restaurants (which it FK-references) and before EVERYTHING
+  // else, and the position is load bearing. orders.openedByStaffId, discounts.appliedByStaffId,
+  // payments.receivedByStaffId and auditLogs.staffId are all NOT NULL FKs into the local `users`
+  // table, and this app runs with PRAGMA foreign_keys = ON (see src/db/client.ts). Staff has
+  // never been part of the generic pull (staff is pushed through POST /staff, and a device only
+  // ever learned the roster from the one-time /pair or /restore), so a staff member added on
+  // another device was permanently unknown here: the first pulled order/discount/payment/audit
+  // log referencing them failed the FK, rolled back the WHOLE pull transaction, never reached
+  // setLastPulledAt, and made this device retry the identical failing payload on every tick
+  // forever. The server now sends the full roster on every pull (it has no updated_at column to
+  // filter on -- see supabase/schema.sql) and we materialise any id we've never seen as a
+  // placeholder `users` row here, so every later FK in this transaction resolves.
+  //
+  // DELIBERATELY NOT FULL STAFF SYNC: this only ever INSERTS rows for staff ids this device has
+  // never seen. Edits to an already-known staff member (name, role, or PIN changes made on
+  // another device) are NOT propagated -- that needs its own conflict-semantics design decision
+  // (a local row may hold this very device's own logged-in staff member with a real salted PIN
+  // hash they set here) and is explicitly out of scope. Hence onConflictDoNothing below: an
+  // existing local users row is never overwritten, only genuinely-unknown ids are added.
+  await applyStaffPlaceholders(tx, pulledData.staff ?? []);
 
   // inventoryItems runs HERE, before the last-write-wins loop below, and the order is load
   // bearing: recipe_ingredients.inventory_item_id is a NOT NULL FK into inventory_items and

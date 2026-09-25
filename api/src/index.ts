@@ -230,6 +230,7 @@ async function fetchAllRows(
       .from(pgTable)
       .select('*')
       .eq('restaurant_id', restaurantId)
+      .order('id', { ascending: true })
       .range(from, from + RESTORE_PAGE_SIZE - 1);
     if (error) throw error;
     rows.push(...(data ?? []));
@@ -256,7 +257,9 @@ async function fetchChangedRows(
     if (sinceIso !== null) {
       query = query.gt(timestampColumn, sinceIso);
     }
-    const { data, error } = await query.range(from, from + RESTORE_PAGE_SIZE - 1);
+    const { data, error } = await query
+      .order('id', { ascending: true })
+      .range(from, from + RESTORE_PAGE_SIZE - 1);
     if (error) throw error;
     rows.push(...(data ?? []));
     if (!data || data.length < RESTORE_PAGE_SIZE) break;
@@ -280,7 +283,7 @@ const CHILD_PARENT_ID_BATCH_SIZE = 200;
  *       PostgREST caps a single response at 1000 rows -- without this, any restaurant with more
  *       than ~1000 order_items across the pulled orders silently received truncated data with no
  *       error of any kind.
- * Unlike the two helpers above it also orders by id: .range() paging without an ORDER BY has no
+ * Like the two helpers above it also orders by id: .range() paging without an ORDER BY has no
  * guaranteed row order between pages, which can duplicate or skip rows across page boundaries. */
 async function fetchChildRowsByParentIds(
   pgTable: string,
@@ -700,6 +703,26 @@ app.post('/sync', async (req: Request, res: Response) => {
 
     const pulledData: Record<string, unknown[]> = {};
     const sinceIso = lastPulledAt ?? null;
+
+    // Staff roster, fetched FIRST and in full on every tick. orders.opened_by_staff_id,
+    // discounts.applied_by_staff_id, payments.received_by_staff_id and audit_logs.staff_id are
+    // all NOT NULL FKs into the client's local `users` table, but staff has never been part of
+    // the generic TABLE_MAP-driven sync (staff pushes go through POST /staff, and a device only
+    // ever learned the roster via the one-time /pair or /restore). So a staff member added on
+    // device A was unknown to device B forever, and the first pulled order they opened failed
+    // B's FK, rolled back B's whole pull transaction, never reached setLastPulledAt, and made B
+    // retry the identical failing payload on every tick. The client turns these rows into
+    // placeholder `users` rows before applying anything that references them.
+    //
+    // Uncursored on purpose: the cloud `staff` table has no updated_at column at all (see
+    // supabase/schema.sql -- only created_at), so it cannot be filtered incrementally like every
+    // other table here. It is a handful of rows per restaurant, so refetching it is cheap.
+    const { data: staffRows, error: staffPullError } = await supabase
+      .from('staff')
+      .select('*')
+      .eq('restaurant_id', restaurantId);
+    if (staffPullError) throw staffPullError;
+    pulledData.staff = staffRows ?? [];
 
     for (const [jsKey, { table: pgTable }] of Object.entries(TABLE_MAP)) {
       if (jsKey === 'restaurants') continue; // fetched separately below, keyed by id not restaurant_id
