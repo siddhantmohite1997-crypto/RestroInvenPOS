@@ -14,6 +14,7 @@ import {
 } from '@/features/sync/syncConfig';
 import { getPendingChangeCount, syncNow } from '@/features/sync/syncService';
 import { listRecentSyncLogs } from '@/features/sync/syncLogService';
+import { flushPendingInventoryDeltas } from '@/features/inventory/stockAdjustmentService';
 import { Button } from '@/components/Button';
 
 const PAD = (n: number) => String(n).padStart(2, '0');
@@ -56,8 +57,16 @@ export default function SyncScreen() {
   });
 
   const syncMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (!currentPin) throw new Error('Please log out and back in, then try again.');
+      // Flush any queued inventory deltas FIRST, same ordering and reasoning as
+      // usePeriodicSync's tick: syncNow's pull adopts the server's quantity for every
+      // inventory item unconditionally, so delivering queued deltas before pulling means the
+      // pull sees the corrected value on its first attempt instead of a stale one. Silent on
+      // failure here too -- a still-offline delta stays queued for the next attempt, and
+      // shouldn't be reported as a "sync error" when the push/pull this button is actually
+      // about might otherwise succeed fine.
+      await flushPendingInventoryDeltas(restaurantId, currentPin).catch(() => {});
       return syncNow(restaurantId, currentPin, 'manual');
     },
     onSuccess: (result) => {
