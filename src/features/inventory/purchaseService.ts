@@ -3,6 +3,7 @@ import { db } from '@/db/client';
 import { suppliers, purchases, inventoryItems, inventoryPurchases } from '@/db/schema';
 import { generateId } from '@/lib/id';
 import { round2 } from '@/features/tax/taxEngine';
+import { adjustStock } from './stockAdjustmentService';
 
 export type Supplier = typeof suppliers.$inferSelect;
 export type Purchase = typeof purchases.$inferSelect;
@@ -34,6 +35,10 @@ export interface PurchaseLineInput {
 export interface RecordSupplierPurchaseInput {
   restaurantId: string;
   staffId: string;
+  /** Needed after the local transaction commits, to attempt a live adjustStock() call for each
+   * line that bumped an EXISTING item's stock (a brand-new item's starting quantity needs no
+   * such call -- see the function body for why). */
+  pin: string;
   /** Defaults to now -- override for a purchase entered a day (or more) late, so it still counts
    * against the day it actually happened rather than the day someone got around to logging it. */
   purchasedAt?: Date;
@@ -54,8 +59,9 @@ export interface RecordSupplierPurchaseInput {
  * participate in this transaction. */
 export async function recordSupplierPurchase(input: RecordSupplierPurchaseInput): Promise<string> {
   const purchasedAt = input.purchasedAt ?? new Date();
+  const existingItemBumps: { inventoryItemId: string; quantity: number }[] = [];
 
-  return db.transaction(async (tx) => {
+  const purchaseId = await db.transaction(async (tx) => {
     let supplierId: string | undefined = input.supplierId;
     if (!supplierId && input.newSupplierName?.trim()) {
       supplierId = generateId();
@@ -85,6 +91,7 @@ export async function recordSupplierPurchase(input: RecordSupplierPurchaseInput)
 
     for (const line of input.lines) {
       const lineTotal = round2(line.quantity * line.costPerUnit);
+      const isExistingItem = !!line.inventoryItemId;
 
       let inventoryItemId = line.inventoryItemId;
       if (!inventoryItemId) {
@@ -95,7 +102,7 @@ export async function recordSupplierPurchase(input: RecordSupplierPurchaseInput)
           name: line.newItemName!,
           category: line.newItemCategory || undefined,
           unit: line.newItemUnit!,
-          quantity: 0,
+          quantity: line.quantity,
           costPerUnit: line.costPerUnit,
         });
       }
@@ -112,18 +119,35 @@ export async function recordSupplierPurchase(input: RecordSupplierPurchaseInput)
         purchasedAt,
       });
 
-      await tx
-        .update(inventoryItems)
-        .set({
-          quantity: sql`ROUND(${inventoryItems.quantity} + ${line.quantity}, 3)`,
-          costPerUnit: line.costPerUnit,
-          updatedAt: new Date(),
-        })
-        .where(eq(inventoryItems.id, inventoryItemId));
+      if (isExistingItem) {
+        await tx
+          .update(inventoryItems)
+          .set({
+            costPerUnit: line.costPerUnit,
+            updatedAt: new Date(),
+          })
+          .where(eq(inventoryItems.id, inventoryItemId));
+        existingItemBumps.push({ inventoryItemId, quantity: line.quantity });
+      } else {
+        // Brand-new item created moments ago in this same transaction -- its costPerUnit was
+        // already set at insert time above; nothing more to update here.
+      }
     }
 
     return purchaseId;
   });
+
+  for (const bump of existingItemBumps) {
+    await adjustStock({
+      restaurantId: input.restaurantId,
+      pin: input.pin,
+      inventoryItemId: bump.inventoryItemId,
+      delta: bump.quantity,
+      reason: 'restock',
+    });
+  }
+
+  return purchaseId;
 }
 
 export interface PurchaseListRow {

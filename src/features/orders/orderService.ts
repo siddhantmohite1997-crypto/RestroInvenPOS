@@ -18,7 +18,11 @@ import { apportionDiscount, type DiscountInput } from '@/features/discounts/disc
 import { setTableStatus } from '@/features/tables/tableService';
 import { nextInvoiceNumber } from '@/features/restaurant/restaurantService';
 import { logAudit } from '@/features/audit/auditService';
-import { consumeIngredients, restoreIngredients } from '@/features/inventory/inventoryService';
+import {
+  consumeIngredients,
+  restoreIngredients,
+  type ConsumeContext,
+} from '@/features/inventory/inventoryService';
 
 export type Order = typeof orders.$inferSelect;
 export type OrderItem = typeof orderItems.$inferSelect;
@@ -123,7 +127,11 @@ export interface AddItemInput {
   notes?: string;
 }
 
-export async function addItemToOrder(orderId: string, input: AddItemInput): Promise<void> {
+export async function addItemToOrder(
+  orderId: string,
+  input: AddItemInput,
+  context: ConsumeContext,
+): Promise<void> {
   // Plain re-taps of the same item (no modifiers, no notes — e.g. the quick-add menu grid)
   // should bump the quantity on the existing line rather than create a new one; a customized
   // line (modifiers and/or notes) always stays its own row, since merging it with a
@@ -156,7 +164,7 @@ export async function addItemToOrder(orderId: string, input: AddItemInput): Prom
           })
           .where(eq(orderItems.id, existing.id));
         await recalculateOrderTotals(orderId);
-        await consumeIngredients(existing.menuItemId, input.quantity);
+        await consumeIngredients(existing.menuItemId, input.quantity, context);
         return;
       }
     }
@@ -237,10 +245,14 @@ export async function addItemToOrder(orderId: string, input: AddItemInput): Prom
   }
 
   await recalculateOrderTotals(orderId);
-  await consumeIngredients(menuItemId, input.quantity);
+  await consumeIngredients(menuItemId, input.quantity, context);
 }
 
-export async function updateItemQuantity(orderItemId: string, quantity: number): Promise<void> {
+export async function updateItemQuantity(
+  orderItemId: string,
+  quantity: number,
+  context: ConsumeContext,
+): Promise<void> {
   const item = await db.query.orderItems.findFirst({ where: eq(orderItems.id, orderItemId) });
   if (!item) return;
   const lineSubtotal = round2(item.unitPriceSnapshot * quantity);
@@ -251,20 +263,20 @@ export async function updateItemQuantity(orderItemId: string, quantity: number):
     .where(eq(orderItems.id, orderItemId));
   await recalculateOrderTotals(item.orderId);
   if (delta > 0) {
-    await consumeIngredients(item.menuItemId, delta);
+    await consumeIngredients(item.menuItemId, delta, context);
   } else if (delta < 0) {
-    await restoreIngredients(item.menuItemId, -delta);
+    await restoreIngredients(item.menuItemId, -delta, context);
   }
 }
 
 /** Pre-payment cart edit — a plain delete, not a formal "void" (that's for edits after a bill is finalized, Phase 6). */
-export async function removeItemFromOrder(orderItemId: string): Promise<void> {
+export async function removeItemFromOrder(orderItemId: string, context: ConsumeContext): Promise<void> {
   const item = await db.query.orderItems.findFirst({ where: eq(orderItems.id, orderItemId) });
   if (!item) return;
   await db.delete(orderItemModifiers).where(eq(orderItemModifiers.orderItemId, orderItemId));
   await db.delete(orderItems).where(eq(orderItems.id, orderItemId));
   await recalculateOrderTotals(item.orderId);
-  await restoreIngredients(item.menuItemId, item.quantity);
+  await restoreIngredients(item.menuItemId, item.quantity, context);
 }
 
 export async function parkOrder(orderId: string): Promise<void> {
@@ -447,7 +459,11 @@ export interface CancelOrderInput {
  * table occupied by design, and voidOrder only applies after payment -- so an abandoned dine-in
  * order stuck its table "Occupied" forever with no UI path to clear it. Reuses the 'void' status
  * (Reports already treats void orders as non-revenue) rather than a status not stated in schema.sql. */
-export async function cancelOrder(orderId: string, input: CancelOrderInput): Promise<void> {
+export async function cancelOrder(
+  orderId: string,
+  input: CancelOrderInput,
+  context: ConsumeContext,
+): Promise<void> {
   const order = await db.query.orders.findFirst({ where: eq(orders.id, orderId) });
   if (!order) throw new Error('Order not found');
   if (order.status === 'paid' || order.status === 'void') {
@@ -458,7 +474,7 @@ export async function cancelOrder(orderId: string, input: CancelOrderInput): Pro
     where: (oi, { and: andOp, eq: eqOp }) => andOp(eqOp(oi.orderId, orderId), eqOp(oi.isVoided, false)),
   });
   for (const item of items) {
-    await restoreIngredients(item.menuItemId, item.quantity);
+    await restoreIngredients(item.menuItemId, item.quantity, context);
   }
 
   await db

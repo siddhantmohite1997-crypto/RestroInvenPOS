@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuthStore } from '@/store/authStore';
+import { useRestaurantId } from '@/features/auth/useRestaurantId';
 import { getComboWithItems } from '@/features/menu/comboService';
 import { addItemToOrder } from '@/features/orders/orderService';
 import { Button } from '@/components/Button';
@@ -10,6 +12,8 @@ export default function AddComboScreen() {
   const { id, comboDealId } = useLocalSearchParams<{ id: string; comboDealId: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const restaurantId = useRestaurantId();
+  const currentPin = useAuthStore((s) => s.currentPin);
 
   const [quantity, setQuantity] = useState(1);
 
@@ -19,12 +23,18 @@ export default function AddComboScreen() {
   });
 
   const addMutation = useMutation({
-    mutationFn: () =>
-      addItemToOrder(id, {
-        comboDealId,
-        quantity,
-        modifiers: [],
-      }),
+    mutationFn: () => {
+      if (!currentPin) throw new Error('Please log out and back in, then try again.');
+      return addItemToOrder(
+        id,
+        {
+          comboDealId,
+          quantity,
+          modifiers: [],
+        },
+        { restaurantId, pin: currentPin },
+      );
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['order', id] });
       router.back();

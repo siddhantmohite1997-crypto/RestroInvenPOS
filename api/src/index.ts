@@ -135,6 +135,27 @@ const TABLE_MAP: Record<string, { table: string; conflictTarget: string }> = {
   auditLogs: { table: 'audit_logs', conflictTarget: 'id' },
 };
 
+// Which timestamp column each table's pull query filters on. Tables never updated after
+// insert (append-only logs) use created_at; everything else uses updated_at. orders is handled
+// specially below (its own updated_at decides whether to include it, but its four child tables
+// are never filtered individually -- they're always resent in full for any order that qualifies,
+// matching how the push side already treats an order's children as "all-or-nothing" rather than
+// diffing them separately). menuItemModifierGroups has no updated_at column (composite-keyed,
+// never edited after creation -- only added or removed) so it's append-only too, filtered on
+// created_at like the others in this list.
+const APPEND_ONLY_TABLES = new Set([
+  'inventoryPurchases',
+  'auditLogs',
+  'purchases',
+  'menuItemModifierGroups',
+  'comboDealItems',
+  'taxComponents',
+]);
+
+// orders' four child tables are pulled alongside their parent order, never independently --
+// see the /sync handler's pull section.
+const ORDER_CHILD_TABLES = ['orderItems', 'orderItemModifiers', 'discounts', 'payments'] as const;
+
 // ============================================================================
 // PAIR ENDPOINT
 // ============================================================================
@@ -201,19 +222,92 @@ const RESTORE_PAGE_SIZE = 1000;
 async function fetchAllRows(
   pgTable: string,
   restaurantId: string,
+  orderColumns: string[] = ['id'],
 ): Promise<Record<string, unknown>[]> {
   const rows: Record<string, unknown>[] = [];
   let from = 0;
   for (;;) {
-    const { data, error } = await supabase
-      .from(pgTable)
-      .select('*')
-      .eq('restaurant_id', restaurantId)
-      .range(from, from + RESTORE_PAGE_SIZE - 1);
+    let query = supabase.from(pgTable).select('*').eq('restaurant_id', restaurantId);
+    for (const col of orderColumns) {
+      query = query.order(col, { ascending: true });
+    }
+    const { data, error } = await query.range(from, from + RESTORE_PAGE_SIZE - 1);
     if (error) throw error;
     rows.push(...(data ?? []));
     if (!data || data.length < RESTORE_PAGE_SIZE) break;
     from += RESTORE_PAGE_SIZE;
+  }
+  return rows;
+}
+
+/** Rows changed since `sinceIso` (exclusive) for one table -- the pull-side mirror of
+ * fetchAllRows, filtered by whichever timestamp column that table uses for change detection.
+ * `sinceIso === null` means "never pulled before", so every row for this restaurant counts as
+ * changed, matching filterChangedSince's client-side "null means everything" convention. */
+async function fetchChangedRows(
+  pgTable: string,
+  restaurantId: string,
+  timestampColumn: 'updated_at' | 'created_at',
+  sinceIso: string | null,
+  orderColumns: string[] = ['id'],
+): Promise<Record<string, unknown>[]> {
+  const rows: Record<string, unknown>[] = [];
+  let from = 0;
+  for (;;) {
+    let query = supabase.from(pgTable).select('*').eq('restaurant_id', restaurantId);
+    if (sinceIso !== null) {
+      query = query.gt(timestampColumn, sinceIso);
+    }
+    for (const col of orderColumns) {
+      query = query.order(col, { ascending: true });
+    }
+    const { data, error } = await query.range(from, from + RESTORE_PAGE_SIZE - 1);
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if (!data || data.length < RESTORE_PAGE_SIZE) break;
+    from += RESTORE_PAGE_SIZE;
+  }
+  return rows;
+}
+
+/** How many parent ids get inlined into a single PostgREST `in.(...)` filter. A restaurant with
+ * thousands of changed orders would otherwise put thousands of uuids into one URL and get a 414
+ * back from the proxy long before Postgres ever saw the query. */
+const CHILD_PARENT_ID_BATCH_SIZE = 200;
+
+/** Child rows belonging to a set of parent ids -- an order's items/discounts/payments (keyed by
+ * order_id), or an order item's modifiers (keyed by order_item_id, since order_item_modifiers
+ * has no order_id column at all -- see supabase/schema.sql).
+ *
+ * Does two things a bare `.in(parentColumn, parentIds)` does not:
+ *   (a) chunks the id list (URL-length ceiling, see CHILD_PARENT_ID_BATCH_SIZE above), and
+ *   (b) pages each chunk with .range(), exactly like fetchAllRows/fetchChangedRows, because
+ *       PostgREST caps a single response at 1000 rows -- without this, any restaurant with more
+ *       than ~1000 order_items across the pulled orders silently received truncated data with no
+ *       error of any kind.
+ * Like the two helpers above it also orders by id: .range() paging without an ORDER BY has no
+ * guaranteed row order between pages, which can duplicate or skip rows across page boundaries. */
+async function fetchChildRowsByParentIds(
+  pgTable: string,
+  parentColumn: string,
+  parentIds: string[],
+): Promise<Record<string, unknown>[]> {
+  const rows: Record<string, unknown>[] = [];
+  for (let i = 0; i < parentIds.length; i += CHILD_PARENT_ID_BATCH_SIZE) {
+    const idsChunk = parentIds.slice(i, i + CHILD_PARENT_ID_BATCH_SIZE);
+    let from = 0;
+    for (;;) {
+      const { data, error } = await supabase
+        .from(pgTable)
+        .select('*')
+        .in(parentColumn, idsChunk)
+        .order('id', { ascending: true })
+        .range(from, from + RESTORE_PAGE_SIZE - 1);
+      if (error) throw error;
+      rows.push(...(data ?? []));
+      if (!data || data.length < RESTORE_PAGE_SIZE) break;
+      from += RESTORE_PAGE_SIZE;
+    }
   }
   return rows;
 }
@@ -262,9 +356,12 @@ app.post('/restore', async (req: Request, res: Response) => {
     }
 
     const data: Record<string, Record<string, unknown>[]> = {};
-    for (const [jsKey, { table: pgTable }] of Object.entries(TABLE_MAP)) {
+    for (const [jsKey, { table: pgTable, conflictTarget }] of Object.entries(TABLE_MAP)) {
       if (jsKey === 'restaurants') continue; // fetched separately below, keyed by id not restaurant_id
-      data[jsKey] = await fetchAllRows(pgTable, restaurantId);
+      // Order by the table's own conflict target -- 'id' for every table except
+      // menuItemModifierGroups, whose composite ('menu_item_id,modifier_group_id') key has no
+      // 'id' column at all. Ordering by a non-existent column is a 42703 from PostgREST.
+      data[jsKey] = await fetchAllRows(pgTable, restaurantId, conflictTarget.split(','));
     }
 
     res.json({ staff: staff ?? [], data });
@@ -362,13 +459,91 @@ app.post('/staff', async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// INVENTORY ADJUST-STOCK ENDPOINT
+// ============================================================================
+
+/**
+ * Applies an atomic, server-authoritative change to one inventory item's quantity -- either a
+ * relative delta (a sale, a restock) or an absolute set (a stocktake correction). Never accepts
+ * a client's snapshot of the current quantity: the whole point is that two devices calling this
+ * concurrently for the same item both land correctly regardless of arrival order, which a
+ * client-computed "new total" could never guarantee. Exactly one of delta/setAbsolute must be
+ * provided. See src/features/inventory/stockAdjustmentService.ts for the client side (always
+ * applies locally first, calls this live when online, queues it otherwise).
+ */
+app.post('/inventory/adjust-stock', async (req: Request, res: Response) => {
+  try {
+    const { restaurantId, pin, inventoryItemId, delta, setAbsolute, reason } = req.body as {
+      restaurantId?: string;
+      pin?: string;
+      inventoryItemId?: string;
+      delta?: number;
+      setAbsolute?: number;
+      reason?: string;
+    };
+
+    if (!restaurantId || !pin || !inventoryItemId || !reason) {
+      return res
+        .status(400)
+        .json({ error: 'restaurantId, pin, inventoryItemId, and reason required' });
+    }
+    if ((delta === undefined) === (setAbsolute === undefined)) {
+      return res.status(400).json({ error: 'Exactly one of delta or setAbsolute is required' });
+    }
+
+    const auth = await verifyPinAuth(restaurantId, pin);
+    if (!auth.valid) {
+      return res.status(401).json({ error: auth.reason || 'Authentication failed' });
+    }
+
+    if (setAbsolute !== undefined) {
+      const { data, error } = await supabase
+        .from('inventory_items')
+        .update({ quantity: setAbsolute, updated_at: new Date().toISOString() })
+        .eq('id', inventoryItemId)
+        .eq('restaurant_id', restaurantId)
+        .select('quantity')
+        .single();
+      if (error) {
+        console.error(`adjust-stock (set) failed for ${inventoryItemId}:`, error);
+        return res.status(500).json({ error: error.message });
+      }
+      return res.json({ quantity: data.quantity });
+    }
+
+    // Postgres computes the new value from its own current row in one atomic statement --
+    // two concurrent calls for the same item both apply correctly regardless of which the
+    // database processes first, since neither ever reads-then-writes a stale snapshot.
+    const { data, error } = await supabase.rpc('adjust_inventory_quantity', {
+      p_inventory_item_id: inventoryItemId,
+      p_restaurant_id: restaurantId,
+      p_delta: delta,
+    });
+    if (error) {
+      console.error(`adjust-stock (delta) failed for ${inventoryItemId}:`, error);
+      return res.status(500).json({ error: error.message });
+    }
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'Inventory item not found' });
+    }
+    res.json({ quantity: data[0].new_quantity });
+  } catch (err) {
+    console.error('Adjust-stock error:', err);
+    res.status(500).json({
+      error: err instanceof Error ? err.message : 'Adjust stock failed',
+    });
+  }
+});
+
+// ============================================================================
 // SYNC ENDPOINT
 // ============================================================================
 
 app.post('/sync', async (req: Request, res: Response) => {
   try {
-    const { restaurantId, pin, syncData, checkOnly } = req.body as SyncRequest & {
+    const { restaurantId, pin, syncData, checkOnly, lastPulledAt } = req.body as SyncRequest & {
       checkOnly?: boolean;
+      lastPulledAt?: string | null;
     };
 
     if (!restaurantId || !pin) {
@@ -464,6 +639,52 @@ app.post('/sync', async (req: Request, res: Response) => {
         return jsKey === 'restaurants' ? snakeRow : { ...snakeRow, restaurant_id: restaurantId };
       });
 
+      if (jsKey === 'inventoryItems') {
+        // quantity is server-authoritative (see POST /inventory/adjust-stock) -- a plain
+        // upsert here would either silently overwrite a more current server value with a
+        // stale local one, or fail outright on the NOT NULL constraint if quantity were simply
+        // omitted from an UPDATE payload (Supabase's upsert() does not do a true partial merge
+        // on conflict -- confirmed directly against this database during the staff pin_hash
+        // incident earlier this session). Existing rows get an explicit update that never
+        // mentions quantity; only a genuinely new row (first time this id has ever reached the
+        // server) gets its quantity inserted, establishing the starting value adjustStock()
+        // will apply deltas against from then on.
+        const existingIds = new Set<string>();
+        for (let i = 0; i < snakeRows.length; i += SYNC_BATCH_SIZE) {
+          const idsChunk = snakeRows.slice(i, i + SYNC_BATCH_SIZE).map((r) => r.id as string);
+          const { data: existingRows, error: lookupError } = await supabase
+            .from(pgTable)
+            .select('id')
+            .in('id', idsChunk);
+          if (lookupError) throw lookupError;
+          for (const row of existingRows ?? []) existingIds.add(row.id as string);
+        }
+
+        const newRows = snakeRows.filter((r) => !existingIds.has(r.id as string));
+        const updateRows = snakeRows.filter((r) => existingIds.has(r.id as string));
+
+        for (let i = 0; i < newRows.length; i += SYNC_BATCH_SIZE) {
+          const chunk = newRows.slice(i, i + SYNC_BATCH_SIZE);
+          const { error } = await supabase.from(pgTable).upsert(chunk, { onConflict: conflictTarget });
+          if (error) {
+            console.error(`Error inserting new ${pgTable}:`, error);
+            throw error;
+          }
+        }
+
+        for (const row of updateRows) {
+          const { quantity: _quantity, id, ...updateFields } = row;
+          const { error } = await supabase.from(pgTable).update(updateFields).eq('id', id as string);
+          if (error) {
+            console.error(`Error updating ${pgTable} ${String(id)}:`, error);
+            throw error;
+          }
+        }
+
+        pushedCounts[jsKey] = rows.length;
+        continue;
+      }
+
       for (let i = 0; i < snakeRows.length; i += SYNC_BATCH_SIZE) {
         const chunk = snakeRows.slice(i, i + SYNC_BATCH_SIZE);
         const { error } = await supabase.from(pgTable).upsert(chunk, {
@@ -479,6 +700,98 @@ app.post('/sync', async (req: Request, res: Response) => {
       pushedCounts[jsKey] = rows.length;
     }
 
+    // Captured before running any pull queries -- any row written concurrently with this
+    // request either lands in this response (if its timestamp query already covers it) or the
+    // next one (since its timestamp will be > this captured moment either way). Never both
+    // included and later missed.
+    const serverNow = new Date();
+
+    const pulledData: Record<string, unknown[]> = {};
+    const sinceIso = lastPulledAt ?? null;
+
+    // Staff roster, fetched FIRST and in full on every tick. orders.opened_by_staff_id,
+    // discounts.applied_by_staff_id, payments.received_by_staff_id and audit_logs.staff_id are
+    // all NOT NULL FKs into the client's local `users` table, but staff has never been part of
+    // the generic TABLE_MAP-driven sync (staff pushes go through POST /staff, and a device only
+    // ever learned the roster via the one-time /pair or /restore). So a staff member added on
+    // device A was unknown to device B forever, and the first pulled order they opened failed
+    // B's FK, rolled back B's whole pull transaction, never reached setLastPulledAt, and made B
+    // retry the identical failing payload on every tick. The client turns these rows into
+    // placeholder `users` rows before applying anything that references them.
+    //
+    // Uncursored on purpose: the cloud `staff` table has no updated_at column at all (see
+    // supabase/schema.sql -- only created_at), so it cannot be filtered incrementally like every
+    // other table here. It is a handful of rows per restaurant, so refetching it is cheap.
+    pulledData.staff = await fetchAllRows('staff', restaurantId);
+
+    for (const [jsKey, { table: pgTable, conflictTarget }] of Object.entries(TABLE_MAP)) {
+      if (jsKey === 'restaurants') continue; // fetched separately below, keyed by id not restaurant_id
+      if (jsKey === 'orders') continue; // handled specially below, with its children
+      if ((ORDER_CHILD_TABLES as readonly string[]).includes(jsKey)) continue;
+      const timestampColumn = APPEND_ONLY_TABLES.has(jsKey) ? 'created_at' : 'updated_at';
+      // Order by the table's own conflict target -- see the identical comment in /restore above;
+      // menuItemModifierGroups has no 'id' column, only its composite conflict-target columns.
+      pulledData[jsKey] = await fetchChangedRows(
+        pgTable,
+        restaurantId,
+        timestampColumn,
+        sinceIso,
+        conflictTarget.split(','),
+      );
+    }
+
+    // restaurants is the one table with no restaurant_id column of its own -- it IS the
+    // restaurant record -- so it can't go through fetchChangedRows (which filters on
+    // restaurant_id and would fail with PostgREST 42703 "column does not exist"). Same special
+    // case /restore already makes for it above; fetched by id, still respecting the pull cursor.
+    let restaurantQuery = supabase.from('restaurants').select('*').eq('id', restaurantId);
+    if (sinceIso !== null) {
+      restaurantQuery = restaurantQuery.gt('updated_at', sinceIso);
+    }
+    const { data: restaurantRows, error: restaurantPullError } = await restaurantQuery;
+    if (restaurantPullError) throw restaurantPullError;
+    // Possibly empty (unchanged since the cursor) -- the client applies it as an ordinary
+    // last-write-wins row, so an empty array simply means "nothing to adopt this tick".
+    pulledData.restaurants = restaurantRows ?? [];
+
+    // Orders: find which orders changed, then pull ALL current rows of their four child tables
+    // for exactly those orders -- never filtered by the children's own timestamps, matching how
+    // the push side already resends an order's children in full whenever the order itself is
+    // dirty, rather than diffing them individually.
+    const changedOrders = await fetchChangedRows('orders', restaurantId, 'updated_at', sinceIso);
+    pulledData.orders = changedOrders;
+    const changedOrderIds = changedOrders.map((o) => o.id as string);
+
+    // Three of the four child tables hang off order_id and can be fetched straight from the
+    // changed order ids. order_item_modifiers CANNOT: the cloud table has no order_id column at
+    // all (see supabase/schema.sql -- it's keyed by order_item_id only), so querying it by
+    // order_id threw PostgREST 42703 and 500'd every /sync that pulled an order with modifiers.
+    // It therefore has to run AFTER order_items, keyed by the ids those rows just returned.
+    // All four go through fetchChildRowsByParentIds for batching + .range() paging (see there).
+    const orderItemRows = await fetchChildRowsByParentIds(
+      TABLE_MAP.orderItems.table,
+      'order_id',
+      changedOrderIds,
+    );
+    pulledData.orderItems = orderItemRows;
+    pulledData.discounts = await fetchChildRowsByParentIds(
+      TABLE_MAP.discounts.table,
+      'order_id',
+      changedOrderIds,
+    );
+    pulledData.payments = await fetchChildRowsByParentIds(
+      TABLE_MAP.payments.table,
+      'order_id',
+      changedOrderIds,
+    );
+    pulledData.orderItemModifiers = await fetchChildRowsByParentIds(
+      TABLE_MAP.orderItemModifiers.table,
+      'order_item_id',
+      orderItemRows.map((i) => i.id as string),
+    );
+
+    const newPulledAt = serverNow.toISOString();
+
     // Update last_synced_at
     await supabase
       .from('restaurants')
@@ -489,7 +802,9 @@ app.post('/sync', async (req: Request, res: Response) => {
       success: true,
       syncedAt: new Date().toISOString(),
       pushedCounts,
-    } as SyncResponse);
+      pulledData,
+      newPulledAt,
+    });
   } catch (err) {
     console.error('Sync error:', err);
     res.status(500).json({

@@ -2,12 +2,14 @@ import { Redirect, Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '@/store/authStore';
 import { useSyncGate } from '@/features/sync/useSyncGate';
+import { usePeriodicSync } from '@/features/sync/usePeriodicSync';
 
 export default function AppLayout() {
   const currentUser = useAuthStore((s) => s.currentUser);
   const tablesEnabled = useAuthStore((s) => s.restaurant?.tablesEnabled ?? true);
 
   useSyncGate();
+  usePeriodicSync();
 
   if (!currentUser) {
     return <Redirect href="/(auth)/login" />;

@@ -1,7 +1,8 @@
-import { eq, getTableColumns } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { SQLiteTable } from 'drizzle-orm/sqlite-core';
 import Constants from 'expo-constants';
 import { db } from '@/db/client';
+import { snakeRowToDrizzle } from '@/features/sync/rowConversion';
 import {
   restaurants,
   users,
@@ -31,6 +32,7 @@ import {
 } from '@/db/schema';
 import { generateId } from '@/lib/id';
 import { createSalt, hashPin } from '@/features/auth/pin';
+import { setLastPulledAt } from '@/features/sync/syncConfig';
 
 export interface PairInput {
   restaurantId: string;
@@ -93,7 +95,7 @@ export async function pairWithRestaurant(input: PairInput): Promise<PairResult> 
       tables_enabled: boolean;
       rounding_rule: 'none' | 'nearest_1' | 'nearest_0_5' | 'nearest_5';
     };
-    staff: { id: string; name: string; role: 'owner' | 'admin' | 'cashier' };
+    staff: { id: string; name: string; role: 'owner' | 'admin' | 'cashier' | null };
   };
 
   const restaurantRow = {
@@ -147,7 +149,7 @@ export async function pairWithRestaurant(input: PairInput): Promise<PairResult> 
     name: staff.name,
     pinHash,
     pinSalt: salt,
-    role: staff.role,
+    role: staff.role ?? 'cashier',
     isActive: true,
   });
 
@@ -185,32 +187,6 @@ const RESTORE_TABLE_ORDER: { key: string; table: SQLiteTable }[] = [
   { key: 'auditLogs', table: auditLogs },
 ];
 
-/** Converts one Postgres row (snake_case keys, as Supabase returns them) into the shape
- * Drizzle expects for this table (camelCase keys, proper JS types) by walking the table's own
- * column definitions rather than hardcoding a per-table field map. A cloud column with no local
- * counterpart (e.g. restaurant_id stamped onto child tables purely for cloud-side RLS) is
- * silently skipped; a local column absent from the cloud row (e.g. one added after this
- * restaurant was first synced) is left for its own `.default(...)` to fill in. */
-function snakeRowToDrizzle(table: SQLiteTable, snakeRow: Record<string, unknown>): Record<string, unknown> {
-  const columns = getTableColumns(table);
-  const result: Record<string, unknown> = {};
-  for (const [camelKey, column] of Object.entries(columns)) {
-    const dbName = column.name;
-    if (!(dbName in snakeRow)) continue;
-    const raw = snakeRow[dbName];
-    if (raw === null || raw === undefined) {
-      result[camelKey] = null;
-    } else if (column.dataType === 'date') {
-      result[camelKey] = new Date(raw as string | number);
-    } else if (column.dataType === 'boolean') {
-      result[camelKey] = Boolean(raw);
-    } else {
-      result[camelKey] = raw;
-    }
-  }
-  return result;
-}
-
 const RESTORE_INSERT_CHUNK_SIZE = 50;
 
 export interface RestoreResult {
@@ -221,7 +197,7 @@ export interface RestoreResult {
 interface CloudStaffRow {
   id: string;
   name: string;
-  role: 'owner' | 'admin' | 'cashier';
+  role: 'owner' | 'admin' | 'cashier' | null;
   pin_hash: string;
 }
 
@@ -284,7 +260,7 @@ export async function restoreFromCloud(
             pinHash,
             pinSalt,
             cloudPinHash: s.pin_hash,
-            role: s.role,
+            role: s.role ?? 'cashier',
             // No is_active column on the cloud staff table (no soft-delete there) --
             // every restored staff row is treated as active.
             isActive: true,
@@ -309,6 +285,12 @@ export async function restoreFromCloud(
       rowsRestored += rows.length;
     }
   });
+
+  // This device just received everything /restore has -- without this, its first periodic
+  // sync would pull the exact same full history all over again (lastPulledAt still null means
+  // "never pulled", per shouldApplyIncoming's convention). Idempotent either way (pullSync's
+  // onConflictDoUpdate/onConflictDoNothing handle a duplicate re-delivery safely), just wasteful.
+  await setLastPulledAt(restaurantId, new Date());
 
   return { tablesRestored, rowsRestored };
 }

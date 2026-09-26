@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuthStore } from '@/store/authStore';
+import { useRestaurantId } from '@/features/auth/useRestaurantId';
 import { getItem } from '@/features/menu/itemService';
 import { getModifierGroupsForItem } from '@/features/menu/modifierService';
 import { addItemToOrder } from '@/features/orders/orderService';
@@ -11,6 +13,8 @@ export default function AddItemModifierScreen() {
   const { id, menuItemId } = useLocalSearchParams<{ id: string; menuItemId: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const restaurantId = useRestaurantId();
+  const currentPin = useAuthStore((s) => s.currentPin);
 
   const [selections, setSelections] = useState<Record<string, string[]>>({});
   const [quantity, setQuantity] = useState(1);
@@ -50,12 +54,18 @@ export default function AddItemModifierScreen() {
   );
 
   const addMutation = useMutation({
-    mutationFn: () =>
-      addItemToOrder(id, {
-        menuItemId,
-        quantity,
-        modifiers: selectedModifiers,
-      }),
+    mutationFn: () => {
+      if (!currentPin) throw new Error('Please log out and back in, then try again.');
+      return addItemToOrder(
+        id,
+        {
+          menuItemId,
+          quantity,
+          modifiers: selectedModifiers,
+        },
+        { restaurantId, pin: currentPin },
+      );
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['order', id] });
       router.back();

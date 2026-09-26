@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, isNull } from 'drizzle-orm';
 import Constants from 'expo-constants';
 import { db } from '@/db/client';
 import {
@@ -25,9 +25,10 @@ import {
   suppliers,
   purchases,
 } from '@/db/schema';
-import { getLastSyncedAt, setLastSyncedAt } from './syncConfig';
+import { getLastSyncedAt, setLastSyncedAt, getLastPulledAt, setLastPulledAt } from './syncConfig';
 import { filterChangedSince } from './syncDiff';
 import { logSyncAttempt } from './syncLogService';
+import { applyPulledData } from './pullSync';
 
 /**
  * Phase 8.5: Supabase Backend Edition
@@ -58,7 +59,12 @@ async function callSupabaseSync(
   restaurantId: string,
   pin: string,
   syncData: Record<string, unknown>,
-): Promise<{ pushedCounts: Record<string, number> }> {
+  lastPulledAt: Date | null,
+): Promise<{
+  pushedCounts: Record<string, number>;
+  pulledData: Record<string, unknown[]>;
+  newPulledAt: string;
+}> {
   const response = await fetch(`${getApiUrl()}/sync`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -66,6 +72,7 @@ async function callSupabaseSync(
       restaurantId,
       pin,
       syncData,
+      lastPulledAt: lastPulledAt ? lastPulledAt.toISOString() : null,
     }),
   });
 
@@ -73,7 +80,11 @@ async function callSupabaseSync(
     throw new Error(`Sync failed: ${await readErrorMessage(response)}`);
   }
 
-  const result = (await response.json()) as { pushedCounts: Record<string, number> };
+  const result = (await response.json()) as {
+    pushedCounts: Record<string, number>;
+    pulledData: Record<string, unknown[]>;
+    newPulledAt: string;
+  };
   return result;
 }
 
@@ -265,6 +276,67 @@ export async function syncNow(
   }
 }
 
+/**
+ * Rebases each outgoing inventory item's `quantity` back onto the baseline the SERVER should
+ * understand — i.e. the value before any stock change this device has applied locally but not
+ * yet delivered to /inventory/adjust-stock.
+ *
+ * The double-count this prevents, concretely: create a brand-new inventory item with quantity
+ * 10 that has never reached the server, then sell 2 of it. adjustStock writes local quantity 8
+ * and queues a -2 row in pending_inventory_deltas. The push below then hits the server's
+ * *new row* branch (see the inventoryItems special case in api/src/index.ts) — the only branch
+ * that ever inserts a quantity — seeding the server with 8, a number that ALREADY contains the
+ * -2. When flushPendingInventoryDeltas later delivers that same -2, the server applies it a
+ * second time and lands on 6. True stock is 8, and every device converges on the wrong 6, with
+ * no error anywhere. Subtracting the undelivered deltas here seeds the server with 10 instead,
+ * so the queued -2 lands exactly once no matter which request arrives first.
+ *
+ * Note this is a no-op for items the server already knows: that branch strips `quantity` from
+ * the update entirely. It only matters for an item's first-ever push — which is exactly the
+ * case where a queued delta cannot have been delivered yet (adjust-stock 404s on an item the
+ * server has never seen), so "unsynced" here is never a false positive.
+ *
+ * setAbsolute rows are deliberately NOT netted out: a correction overrides history rather than
+ * composing with it, so there is no baseline to reconstruct, and the queued setAbsolute stays
+ * the sole source of truth for that item's quantity (it overwrites whatever this push seeds,
+ * whichever order they arrive in). Its quantity is therefore pushed unmodified. Do not
+ * "simplify" either branch back into a plain local quantity for every item.
+ */
+async function rebasePushQuantities<T extends { id: string; quantity: number }>(
+  restaurantId: string,
+  items: T[],
+): Promise<T[]> {
+  if (items.length === 0) return items;
+
+  const pending = await db.query.pendingInventoryDeltas.findMany({
+    where: (d, { and, eq: eqOp }) => and(eqOp(d.restaurantId, restaurantId), isNull(d.syncedAt)),
+  });
+  if (pending.length === 0) return items;
+
+  const undeliveredDeltaSum = new Map<string, number>();
+  const hasUndeliveredSetAbsolute = new Set<string>();
+  for (const row of pending) {
+    if (row.setAbsolute !== null) {
+      hasUndeliveredSetAbsolute.add(row.inventoryItemId);
+      continue;
+    }
+    if (row.delta === null) continue;
+    undeliveredDeltaSum.set(
+      row.inventoryItemId,
+      (undeliveredDeltaSum.get(row.inventoryItemId) ?? 0) + row.delta,
+    );
+  }
+
+  return items.map((item) => {
+    if (hasUndeliveredSetAbsolute.has(item.id)) return item;
+    const sum = undeliveredDeltaSum.get(item.id);
+    if (sum === undefined || sum === 0) return item;
+    // Rounded to 3dp to match both the local ROUND(..., 3) in adjustStock and the cloud
+    // column's NUMERIC(10, 3), so backing a delta out never reintroduces float dust.
+    return { ...item, quantity: Math.round((item.quantity - sum) * 1000) / 1000 };
+  });
+}
+
 async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncResult> {
   const lastSyncedAt = await getLastSyncedAt(restaurantId);
   const syncData: Record<string, unknown> = {};
@@ -354,9 +426,12 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
   const inventoryItemRows = await db.query.inventoryItems.findMany({
     where: eq(inventoryItems.restaurantId, restaurantId),
   });
-  syncData.inventoryItems = filterChangedSince(
-    inventoryItemRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
-    lastSyncedAt,
+  syncData.inventoryItems = await rebasePushQuantities(
+    restaurantId,
+    filterChangedSince(
+      inventoryItemRows.map((r) => ({ ...r, changedAt: r.updatedAt })),
+      lastSyncedAt,
+    ),
   );
 
   const purchaseRows = await db.query.inventoryPurchases.findMany({
@@ -475,8 +550,29 @@ async function syncNowInternal(restaurantId: string, pin: string): Promise<SyncR
     lastSyncedAt,
   );
 
-  // Call Supabase API to sync (server handles all PostgreSQL writes)
-  const result = await callSupabaseSync(restaurantId, pin, syncData);
+  let lastPulledAt = await getLastPulledAt(restaurantId);
+  // Backfill the pull cursor for devices that were already paired BEFORE bidirectional sync
+  // shipped -- which is every device currently in the field. Only restoreFromCloud ever seeds
+  // lastPulledAt, so those devices would send null on their first pull, and null means "send
+  // this device everything you have", applied client-side in one long transaction racing the
+  // 45s timeout -- precisely the class of failure this feature exists to prevent, on the
+  // devices where it matters most. A device that has been pushing since before this shipped
+  // already holds its own data plus everything its original restore snapshot covered up to
+  // lastSyncedAt, so seeding the pull cursor there makes this first pull an ordinary
+  // incremental one. A genuinely fresh device (lastSyncedAt also null) is untouched and still
+  // gets a full first pull, which is correct for it.
+  if (lastPulledAt === null && lastSyncedAt !== null) {
+    await setLastPulledAt(restaurantId, lastSyncedAt);
+    lastPulledAt = lastSyncedAt;
+  }
+
+  // Call Supabase API to sync (server handles all PostgreSQL writes for the push half)
+  const result = await callSupabaseSync(restaurantId, pin, syncData, lastPulledAt);
+
+  await db.transaction(async (tx) => {
+    await applyPulledData(tx, result.pulledData);
+  });
+  await setLastPulledAt(restaurantId, new Date(result.newPulledAt));
 
   const syncedAt = new Date();
   await setLastSyncedAt(restaurantId, syncedAt);

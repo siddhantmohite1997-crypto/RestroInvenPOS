@@ -15,6 +15,7 @@ import m0010 from './0010_marvelous_banshee.sql';
 import m0011 from './0011_tidy_mantis.sql';
 import m0012 from './0012_chubby_warbound.sql';
 import m0013 from './0013_third_kid_colt.sql';
+import m0014 from './0014_thankful_silverclaw.sql';
 
   export default {
     journal,
@@ -32,7 +33,8 @@ m0009,
 m0010,
 m0011,
 m0012,
-m0013
+m0013,
+m0014
     }
   }
   
